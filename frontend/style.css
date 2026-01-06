@@ -1,0 +1,56 @@
+:root {
+    --test-border: 1px dashed black;
+}
+
+*, *::before, *::after {
+
+}
+
+/*
+Built-in html els
+*/
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    border: var(--test-border)
+}
+main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1 0 auto;
+
+    margin: 10%;
+}
+
+footer {
+    border: var(--test-border)
+}
+
+/*
+Custom html els
+*/
+
+.video-uploader-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    border: var(--test-border)
+}
+
+.video-preview-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SceneSeek</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <header>
+        <h1>SceneSeek</h1>
+        <h4>Мультимодальный поиск по видео</h4>        
+    </header>
+    <main>
+        <div class="video-uploader-area">
+            <div class="upload-area" id="dropArea">
+                <input type="file" id="fileInput" class="file-input">
+            </div>
+            
+            <div class="video-preview-area">
+                <video id="videoPlayer" hidden controls></video>
+                <button id="removeBtn" hidden>Удалить видео</button>
+            </div>
+        </div>  
+    </main>
+    <footer>
+        <p>&copy; 2025-2026</p>
+    </footer>
+</body>
+</html>
