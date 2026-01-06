@@ -22,5 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def root():
+    return {
+        "message": "root"
+    }
+
 if __name__ == "__main__":
     asyncio.run(app.run())
