@@ -16,7 +16,10 @@
     <main>
         <div class="video-uploader-area">
             <div class="upload-area" id="dropArea">
-                <input type="file" id="fileInput" class="file-input">
+                <label for="fileInput">
+                <input type="file" id="fileInput" class="file-input" hidden>
+                <h4>Загрузить файл</h4>
+                </label>
             </div>
             
             <div class="video-preview-area">
@@ -24,6 +27,24 @@
                 <button id="removeBtn" hidden>Удалить видео</button>
             </div>
         </div>  
+        <div class="ai-assistant-area">
+            <div class="chat-history-area" id="chat-history-area">
+                <div class="ai-msg-area">
+                    Send me a msg
+                </div>
+            </div>
+            <div class="user-box-area">
+                <form action="" id="user-form">
+                    <input
+                    type="text"
+                    id="user-input"
+                    placeholder="Type a message..."
+                    required autocomplete="off"
+                    >
+                    <button type="submit">Send</button>
+                </form>
+            </div>
+        </div>
     </main>
     <footer>
         <p>&copy; 2025-2026</p>
