@@ -4,9 +4,34 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.core.database import engine, create_tables
+from src.core.broker import broker
+from src.services.minio_service import minio_service
+
+from src.api.v1.router import router
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
+    print("INFO: init DB")
+    await create_tables()
+
+    print("INFO: Init RabbitMQ")
+    await broker.start()
+
+    print("INFO: Init MinIO")
+    minio_service.create_buckets()
+
+
     yield
+
+    await broker.stop()
+
+    await engine.dispose()
+
+    print("INFO: Termination")
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -22,11 +47,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
-    return {
-        "message": "root"
-    }
+app.include_router(router=router)
 
 if __name__ == "__main__":
     asyncio.run(app.run())
