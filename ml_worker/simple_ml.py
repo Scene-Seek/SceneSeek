@@ -1,9 +1,9 @@
 import cv2
+import imagehash
 import numpy as np
 import torch
-import imagehash
 from PIL import Image
-from transformers import AutoProcessor, ProcessorMixin, AutoModel, PreTrainedModel
+from transformers import AutoModel, AutoProcessor, PreTrainedModel, ProcessorMixin
 
 
 def extract_frames(video_path: str, threshold: int = 5) -> tuple[list, list]:
