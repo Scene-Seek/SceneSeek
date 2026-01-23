@@ -6,5 +6,5 @@ def main():
 
 if __name__ == "__main__":
     while True:
-        time.sleep(10) 
+        time.sleep(100) 
         main()

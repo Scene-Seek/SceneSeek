@@ -1,23 +1,25 @@
 services:
+  # postgres
   db:
     image: postgres:15-alpine
     container_name: postgres_db_ss
     restart: always
     environment:
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: test
-      POSTGRES_DB: test_db
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+  # rabbitmq
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: rabbitmq_ss
     restart: always
     environment:
-      RABBITMQ_DEFAULT_USER: test
-      RABBITMQ_DEFAULT_PASS: test
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -28,19 +30,21 @@ services:
       interval: 5s
       timeout: 10s
       retries: 5
+  # s3 storage
   minio:
     image: minio/minio:latest
     container_name: minio_ss
     restart: always
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: test
-      MINIO_ROOT_PASSWORD: test_minio
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - minio_data:/data
+  # backend
   gateway:
     build: ./gateway
     ports:
@@ -60,6 +64,7 @@ services:
       MINIO_ENDPOINT: "minio:9000"
       MINIO_ACCESS_KEY: "test"
       MINIO_SECRET_KEY: "test_minio"
+  # backend-worker
   ml_worker:
     build: ./ml_worker
     container_name: ml_worker_ss
@@ -77,6 +82,7 @@ services:
       MINIO_ENDPOINT: "minio:9000"
       MINIO_ACCESS_KEY: "test"
       MINIO_SECRET_KEY: "test_minio"
+  # frontend
   frontend:
     build: ./frontend
     container_name: frontend_ss

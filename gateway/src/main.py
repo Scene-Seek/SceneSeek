@@ -10,6 +10,12 @@ from src.services.minio_service import minio_service
 
 from src.api.v1.router import router
 
+from src.models.search_history import SearchHistory
+from src.models.search_results import SearchResults
+from src.models.users import Users
+from src.models.video_events import VideoEvents
+from src.models.videos import Videos
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,7 +34,7 @@ async def lifespan(app: FastAPI):
 
     await broker.stop()
 
-    await engine.dispose()
+    # await engine.dispose()
 
     print("INFO: Termination")
 
