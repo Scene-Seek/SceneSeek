@@ -27,7 +27,7 @@ class IndexerConfig:
     florence_batch_size: int = 6
     motion_threshold: int = 1000
     yolo_conf: float = 0.25
-    db_dsn: str = "postgresql://postgres:postgres@localhost:5432/video_db"
+    db_dsn: str = "postgresql://postgres:пароль@localhost:5432/sceneseek_test"
     debug_mode: bool = False
     debug_dir: str = "debug_output"
 
@@ -45,9 +45,10 @@ class VideoSearchEngine:
 
     async def initialize_db(self) -> None:
         """
-        Асинхронная инициализация пула соединений и расширений.
+        Асинхронная инициализация пула соединений, расширений и схемы БД.
         """
         try:
+            # Создаем пул соединений
             self.pool = await asyncpg.create_pool(dsn=self.config.db_dsn)
 
             if self.pool is None:
@@ -55,11 +56,86 @@ class VideoSearchEngine:
 
             async with self.pool.acquire() as conn:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
                 await register_vector(conn)
 
-            print(" 📦 [DB] Подключение успешно (asyncpg).")
+                ddl_script = """
+                    -- 1. Пользователи
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id SERIAL PRIMARY KEY,
+                        username VARCHAR(100) NOT NULL,
+                        role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'scientist', 'analyst'))
+                    );
+
+                    -- Добавляем дефолтного юзера, чтобы foreign keys работали сразу
+                    INSERT INTO users (user_id, username, role)
+                    VALUES (1, 'admin', 'admin')
+                    ON CONFLICT (user_id) DO NOTHING;
+
+                    -- 2. Видео
+                    CREATE TABLE IF NOT EXISTS videos (
+                        video_id SERIAL PRIMARY KEY,
+                        uploaded_by_user_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+                        title VARCHAR(255) NOT NULL,
+                        path VARCHAR(512) NOT NULL,
+                        duration FLOAT,
+                        fps FLOAT,
+                        resolution VARCHAR(20),
+                        processing_status VARCHAR(20) DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    -- 3. События
+                    CREATE TABLE IF NOT EXISTS video_events (
+                        event_id BIGSERIAL PRIMARY KEY,
+                        video_id INT REFERENCES videos(video_id) ON DELETE CASCADE,
+                        timestamp FLOAT NOT NULL,
+                        caption TEXT NOT NULL,
+                        yolo_metadata JSONB DEFAULT '{}'::jsonb,
+                        embedding vector(384),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    -- 4. История поиска
+                    CREATE TABLE IF NOT EXISTS search_history (
+                        query_id BIGSERIAL PRIMARY KEY,
+                        user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                        query_text TEXT NOT NULL,
+                        query_embedding vector(384),
+                        search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    -- 5. Результаты поиска
+                    CREATE TABLE IF NOT EXISTS search_results (
+                        result_id BIGSERIAL PRIMARY KEY,
+                        query_id BIGINT REFERENCES search_history(query_id) ON DELETE CASCADE,
+                        found_event_id BIGINT REFERENCES video_events(event_id) ON DELETE CASCADE,
+                        similarity_score FLOAT,
+                        is_relevant BOOLEAN DEFAULT NULL
+                    );
+
+                    -- --- ИНДЕКСЫ ---
+
+                    -- HNSW индекс для векторов (самый важный)
+                    CREATE INDEX IF NOT EXISTS idx_events_embedding
+                    ON video_events USING hnsw (embedding vector_cosine_ops);
+
+                    -- GIN индекс для JSONB (метаданные YOLO)
+                    CREATE INDEX IF NOT EXISTS idx_events_yolo
+                    ON video_events USING GIN (yolo_metadata);
+
+                    -- B-Tree индекс для поиска по видео и времени
+                    CREATE INDEX IF NOT EXISTS idx_events_video_id
+                    ON video_events(video_id, timestamp);
+                    """
+
+                # Выполняем весь скрипт создания таблиц
+                await conn.execute(ddl_script)
+
+            print(" 📦 [DB] Подключение и миграции успешны (asyncpg).")
+
         except Exception as e:
-            print(f"❌ [DB] Ошибка подключения: {e}")
+            print(f"❌ [DB] Ошибка инициализации: {e}")
             raise e
 
     async def close(self) -> None:
@@ -380,7 +456,7 @@ if __name__ == "__main__":
 
     async def main():
         # DSN для asyncpg
-        dsn = "postgresql://postgres:postgres@localhost:5432/video_db"
+        dsn = "postgresql://postgres:пароль@localhost:5432/sceneseek_test"
         conf = IndexerConfig(db_dsn=dsn, frame_skip=15)
 
         engine = VideoSearchEngine(config=conf)
@@ -388,15 +464,16 @@ if __name__ == "__main__":
 
         try:
             # Убедитесь, что файл существует
-            if os.path.exists("store_camera_01.mp4"):
-                await engine.run_indexing("store_camera_01.mp4", user_id=1)
+            if os.path.exists("video.mp4"):
+                print("\n Индексация...")
+                await engine.run_indexing("video.mp4", user_id=1)
 
-                print("\n🔍 Поиск...")
-                results = await engine.search("person holding a bottle")
+                print("\n Поиск...")
+                results = await engine.search("a monkey")
                 for res in results:
                     print(res)
             else:
-                print("Файл store_camera_01.mp4 не найден для теста.")
+                print("Файл video.mp4 не найден для теста.")
         finally:
             await engine.close()
 
