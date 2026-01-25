@@ -11,8 +11,6 @@ class Settings(BaseSettings):
     DB_NAME: str
 
     RABBITMQ_URL: str
-    RABBITMQ_USER: str
-    RABBITMQ_PASS: str
 
     MINIO_ENDPOINT: str
     MINIO_ACCESS_KEY: str
@@ -22,6 +20,6 @@ class Settings(BaseSettings):
     def DATABASE_URL(self):
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env")
 
 settings = Settings()

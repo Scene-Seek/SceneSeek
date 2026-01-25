@@ -8,20 +8,12 @@ class MinioService:
     def __init__(self, client: Minio):
         self.client = client
         self.BUCKET_VIDEOS_IN="videos-in-bucket"
-        self.BUCKETS = {self.BUCKET_VIDEOS_IN}
+        self.BUCKETS = [self.BUCKET_VIDEOS_IN]
 
     def create_buckets(self):
         """
         Создает бакеты, если их нет
         """
-        _all_buckets = self.client.list_buckets()
-        all_buckets = {bucket.name for bucket in _all_buckets}
-        buckets_to_delete = all_buckets - self.BUCKETS
-        if not buckets_to_delete:
-            print("INFO-minio: no excess buckets")
-        for bucket in buckets_to_delete:
-            self.client.remove_bucket(bucket)
-
         for bucket in self.BUCKETS:
             isExisting = self.client.bucket_exists(bucket)
             if not isExisting:
