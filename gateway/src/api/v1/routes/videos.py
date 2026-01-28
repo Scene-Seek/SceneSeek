@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, HTTPException
+from fastapi import APIRouter, UploadFile, HTTPException, Form
 from src.services.broker_service import broker_service
 from src.services.database_service import database_service
 from src.services.minio_service import minio_service
@@ -10,14 +10,14 @@ from src.api.v1.schemas.video import (
 router = APIRouter()
 
 @router.post("/videos", response_model=UploadVideoResponseScheme)
-async def post_videos(file: UploadFile):
+async def post_videos(file: UploadFile, user_id: int = Form(...)):
     """
     Создать новое видео
     """
 
     try:
         # broker
-        await broker_service.pub(message=file.filename, queue=broker_service.queue)
+        await broker_service.pub(message=file.filename, queue=broker_service.QUEUE_VIDEOS)
         # minio
         minio_service.save_obj(
             obj=file,
@@ -26,7 +26,7 @@ async def post_videos(file: UploadFile):
         video_path = minio_service.get_video_url(object_name=file.filename)
         # db
         video = await database_service.create_video( # TODO: configure atributes
-            uploaded_by_user_id=None,
+            uploaded_by_user_id=user_id,
             title=file.filename,
             path=video_path,
             duration=None,

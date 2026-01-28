@@ -2,12 +2,14 @@ from sqlalchemy import select
 
 from src.core.database import session_factory
 from src.models.videos import Videos
-
+from src.models.search_history import SearchHistory
+from src.models.users import Users
 
 class DatabaseService:
     def __init__(self) -> None:
         pass
 
+    # Video
     async def create_video(
         self,
         *,
@@ -44,5 +46,57 @@ class DatabaseService:
                 select(Videos).where(Videos.video_id == video_id)
             )
             return result.scalar_one_or_none()
+
+    # Query
+    async def create_query(
+        self,
+        *,
+        user_id: int,
+        video_id: int,
+        query: str
+    ) -> SearchHistory:
+        async with session_factory() as session:
+            query = SearchHistory(
+                user_id=user_id,
+                video_id=video_id,
+                query_text=query
+            )
+            session.add(query)
+            await session.commit()
+            await session.refresh(query)
+            return query
+
+    async def get_query_by_id(
+        self,
+        *,
+        query_id: int
+    ) -> SearchHistory | None:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(SearchHistory).where(SearchHistory.query_id == query_id)
+            )
+            return result.scalar_one_or_none()
+    
+    # User
+    async def find_or_create_user(
+        self,
+        *,
+        username: str,
+        role: str = "user"
+    ) -> Users:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Users).where(Users.username == username)
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                user = Users(username=username, role=role)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+                return user
+            else:
+                return user
+                
 
 database_service = DatabaseService()

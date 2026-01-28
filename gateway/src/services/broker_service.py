@@ -5,7 +5,8 @@ from src.core.broker import broker
 class BrokerService():
     def __init__(self, broker: RabbitBroker):
         self.broker = broker
-        self.queue = "videos"
+        self.QUEUE_VIDEOS = "videos"
+        self.QUEUE_SEARCHES = "searches"
 
     async def pub(self, *, message: str, queue: str):
         async with self.broker as br:

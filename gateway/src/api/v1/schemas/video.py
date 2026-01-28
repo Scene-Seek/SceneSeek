@@ -1,11 +1,5 @@
-from enum import Enum
 from pydantic import BaseModel
-
-class StatusEnum(str, Enum):
-    pending = "pending"
-    indexing = "indexing"
-    ready = "ready"
-    failed = "failed"
+from src.api.v1.schemas.common import StatusEnum
 
 class UploadVideoResponseScheme(BaseModel):
     video_id: int
