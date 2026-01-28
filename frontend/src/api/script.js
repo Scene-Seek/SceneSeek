@@ -20,6 +20,8 @@ fileInput.addEventListener("change", (event) => {
     }
 });
 
+response = fetch()
+
 // Удалить видео
 removeBtn.addEventListener("click", (event) => {
     console.log("INFO: user deleted file");

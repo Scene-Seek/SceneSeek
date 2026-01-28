@@ -1,12 +1,15 @@
+from datetime import timedelta
+
 from minio.api import Minio
 
 from fastapi import UploadFile
 
-from src.core.minio import client
+from src.core.minio import client, public_client
 
 class MinioService:
-    def __init__(self, client: Minio):
+    def __init__(self, *, client: Minio, public_client: Minio):
         self.client = client
+        self.public_client = public_client
         self.BUCKET_VIDEOS_IN="videos-in-bucket"
         self.BUCKETS = [self.BUCKET_VIDEOS_IN]
 
@@ -34,5 +37,31 @@ class MinioService:
             content_type=obj.content_type
         )
 
+    def get_presigned_url(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        expires_seconds: int = 3600
+    ) -> str:
+        """
+        Возвращает временную ссылку для скачивания/просмотра объекта.
+        """
+        return self.public_client.presigned_get_object(
+            bucket_name=bucket,
+            object_name=object_name,
+            expires=timedelta(seconds=expires_seconds)
+        )
 
-minio_service = MinioService(client=client)
+    def get_video_url(self, *, object_name: str, expires_seconds: int = 3600) -> str:
+        """
+        Удобный метод для видео в default bucket.
+        """
+        return self.get_presigned_url(
+            bucket=self.BUCKET_VIDEOS_IN,
+            object_name=object_name,
+            expires_seconds=expires_seconds
+        )
+
+
+minio_service = MinioService(client=client, public_client=public_client)

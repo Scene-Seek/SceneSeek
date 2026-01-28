@@ -5,10 +5,11 @@ from src.core.broker import broker
 class BrokerService():
     def __init__(self, broker: RabbitBroker):
         self.broker = broker
+        self.queue = "videos"
 
     async def pub(self, *, message: str, queue: str):
         async with self.broker as br:
-            br.publish(
+            await br.publish(
                 message=message,
                 queue=queue
             )

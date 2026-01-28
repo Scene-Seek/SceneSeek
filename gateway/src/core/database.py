@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from src.models.base import Base
@@ -9,7 +10,7 @@ engine = create_async_engine(
     echo=True
 )
 
-session_factory = async_sessionmaker(engine=engine)
+session_factory = async_sessionmaker(bind=engine)
 
 async def create_tables():
     """
@@ -17,4 +18,5 @@ async def create_tables():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
         await conn.run_sync(Base.metadata.create_all)
