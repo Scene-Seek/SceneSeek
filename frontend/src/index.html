@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SceneSeek</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/src/styles/style.css">
-    <script src="/src/api/script.js" defer></script>
+    <link rel="stylesheet" href="/styles/style.css">
+    <script src="/api/script.js" defer></script>
 </head>
 <body>
     <header>
@@ -14,37 +14,62 @@
         <h4>Мультимодальный поиск по видео</h4>        
     </header>
     <main>
-        <div class="video-uploader-area">
-            <div class="upload-area" id="dropArea">
-                <label for="fileInput">
-                <input type="file" id="fileInput" class="file-input" hidden>
-                <h4>Загрузить файл</h4>
+        <section class="card" id="identify-card">
+            <h2>1. Идентификация</h2>
+            <form id="identify-form">
+                <label>
+                    Никнейм
+                    <input type="text" id="nickname-input" placeholder="Введите имя" required autocomplete="off">
                 </label>
+                <button type="submit">Войти</button>
+            </form>
+            <div class="status-line">
+                <span>Пользователь:</span>
+                <strong id="user-status">не выбран</strong>
             </div>
-            
-            <div class="video-preview-area">
-                <video id="videoPlayer" hidden controls></video>
-                <button id="removeBtn" hidden>Удалить видео</button>
-            </div>
-        </div>  
-        <div class="ai-assistant-area">
-            <div class="chat-history-area" id="chat-history-area">
-                <div class="ai-msg-area">
-                    Send me a msg
+        </section>
+
+        <section class="card" id="upload-card">
+            <h2>2. Загрузка видео</h2>
+            <div class="video-uploader-area">
+                <div class="upload-area" id="dropArea">
+                    <label for="fileInput">
+                        <input type="file" id="fileInput" class="file-input" accept="video/*" hidden>
+                        <h4>Выберите видео</h4>
+                    </label>
+                </div>
+                <div class="video-preview-area">
+                    <video id="videoPlayer" hidden controls></video>
+                    <button id="removeBtn" hidden type="button">Удалить видео</button>
                 </div>
             </div>
-            <div class="user-box-area">
-                <form action="" id="user-form">
-                    <input
-                    type="text"
-                    id="user-input"
-                    placeholder="Type a message..."
-                    required autocomplete="off"
-                    >
-                    <button type="submit">Send</button>
-                </form>
+            <div class="actions">
+                <button id="uploadBtn" type="button">Загрузить</button>
             </div>
-        </div>
+            <div class="status-line">
+                <span>Видео:</span>
+                <strong id="video-status">не загружено</strong>
+            </div>
+        </section>
+
+        <section class="card" id="search-card">
+            <h2>3. Поиск по видео</h2>
+            <form id="search-form">
+                <label>
+                    Промпт
+                    <input type="text" id="prompt-input" placeholder="Например: monkey" required autocomplete="off">
+                </label>
+                <button type="submit">Искать</button>
+            </form>
+            <div class="status-line">
+                <span>Статус поиска:</span>
+                <strong id="search-status">ожидание</strong>
+            </div>
+            <div class="results-area">
+                <h3>Результаты</h3>
+                <ul id="results-list"></ul>
+            </div>
+        </section>
     </main>
     <footer>
         <p>&copy; 2025-2026</p>
