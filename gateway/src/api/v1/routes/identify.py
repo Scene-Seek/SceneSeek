@@ -16,6 +16,7 @@ async def identify(payload: IdentifyRequestScheme):
         nickname = payload.nickname.strip()
         if not nickname:
             raise HTTPException(status_code=422, detail="nickname is required")
+            # db
         user = await database_service.find_or_create_user(username=nickname)
         return IdentifyResponseScheme(user_id=user.user_id, nickname=user.username, role=user.role)
     except Exception as e:

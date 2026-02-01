@@ -1,3 +1,5 @@
+"""s3"""
+
 from minio.api import Minio
 
 from src.core.config import settings

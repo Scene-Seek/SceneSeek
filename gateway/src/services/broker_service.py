@@ -11,6 +11,9 @@ class BrokerService():
         self.QUEUE_SEARCHES = "searches"
 
     async def pub(self, *, message: Any, queue: str):
+        """
+        Publish message
+        """
         async with self.broker as br:
             await br.publish(
                 message=message,

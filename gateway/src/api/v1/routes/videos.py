@@ -16,6 +16,7 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
     """
 
     try:
+        # Если нет пользователя, то исключение
         user = await database_service.get_user_by_id(user_id=user_id)
         if not user:
             raise HTTPException(status_code=404, detail="user not found")
@@ -57,6 +58,7 @@ async def get_videos(video_id: int):
     Получить ссылку на видео по id
     """
     try:
+        # db
         video = await database_service.get_video_by_id(video_id=video_id)
         return GetVideoResponseScheme(video_id=video_id, video_path=video.path)
     except Exception as e:

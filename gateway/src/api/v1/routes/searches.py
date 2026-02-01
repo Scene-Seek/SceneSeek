@@ -16,9 +16,11 @@ async def post_searches(payload: UploadSearchRequestScheme):
     Создать новый промпт
     """
     try:
+        # Если нет пользователя, то исключение
         user = await database_service.get_user_by_id(user_id=payload.user_id)
         if not user:
             raise HTTPException(status_code=404, detail="user not found")
+        # Если нет видео, то исключение
         video = await database_service.get_video_by_id(video_id=payload.video_id)
         if not video:
             raise HTTPException(status_code=404, detail="video not found")
@@ -57,6 +59,7 @@ async def get_searches_status(query_id: int):
     Получить статус поиска
     """
     try:
+        # db
         query = await database_service.get_query_by_id(query_id=query_id)
         return GetSearchStatusResponseScheme(
             query_id=query_id,
@@ -75,6 +78,7 @@ async def get_searches_results(query_id: int):
     Получить результаты поиска
     """
     try:
+        # db
         results = await database_service.get_query_results_by_id(query_id=query_id)
         # TODO переделать на таймкоды
         results = [result.similarity_score for result in results] 
