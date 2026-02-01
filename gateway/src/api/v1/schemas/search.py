@@ -20,3 +20,9 @@ class GetSearchStatusResponseScheme(BaseModel):
     video_id: int
     query_text: str
     status: StatusEnum
+
+class GetSearchResultsScheme(BaseModel):
+    query_id: int
+    # user_id: int
+    # video_id: int
+    result: list

@@ -1,3 +1,5 @@
 from faststream.rabbit import RabbitBroker
 
-broker = RabbitBroker(url="amqp://test:test@rabbitmq:5672/")
+from src.core.config import settings
+
+broker = RabbitBroker(url=settings.RABBITMQ_URL)

@@ -1,3 +1,5 @@
+from typing import Any
+
 from faststream.rabbit import RabbitBroker
 
 from src.core.broker import broker
@@ -8,7 +10,7 @@ class BrokerService():
         self.QUEUE_VIDEOS = "videos"
         self.QUEUE_SEARCHES = "searches"
 
-    async def pub(self, *, message: str, queue: str):
+    async def pub(self, *, message: Any, queue: str):
         async with self.broker as br:
             await br.publish(
                 message=message,

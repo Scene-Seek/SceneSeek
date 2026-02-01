@@ -1,18 +1,22 @@
 from fastapi import APIRouter, HTTPException
 from src.services.database_service import database_service
-from src.api.v1.schemas.identification import IdentifyResponseScheme
+from src.api.v1.schemas.identification import (
+    IdentifyRequestScheme,
+    IdentifyResponseScheme
+)
 
 router = APIRouter()
 
 @router.post("/identify", response_model=IdentifyResponseScheme)
-async def identify(nickname: str):
+async def identify(payload: IdentifyRequestScheme):
     """
     Идентифицировать пользователя
     """
     try:
-        user = await database_service.find_or_create_user(
-            username=nickname
-        )
+        nickname = payload.nickname.strip()
+        if not nickname:
+            raise HTTPException(status_code=422, detail="nickname is required")
+        user = await database_service.find_or_create_user(username=nickname)
         return IdentifyResponseScheme(user_id=user.user_id, nickname=user.username, role=user.role)
     except Exception as e:
         print(f"Error: {e}")

@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from src.models.search_results import SearchResults
 from src.core.database import session_factory
 from src.models.videos import Videos
 from src.models.search_history import SearchHistory
@@ -47,6 +48,17 @@ class DatabaseService:
             )
             return result.scalar_one_or_none()
 
+    async def get_user_by_id(
+        self,
+        *,
+        user_id: int
+    ) -> Users | None:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Users).where(Users.user_id == user_id)
+            )
+            return result.scalar_one_or_none()
+
     # Query
     async def create_query(
         self,
@@ -76,6 +88,17 @@ class DatabaseService:
                 select(SearchHistory).where(SearchHistory.query_id == query_id)
             )
             return result.scalar_one_or_none()
+
+    async def get_query_results_by_id(
+        self,
+        *,
+        query_id: int
+    ) -> list[SearchResults]:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(SearchResults).where(SearchResults.query_id == query_id)
+            )
+            return result.scalars().all()
     
     # User
     async def find_or_create_user(

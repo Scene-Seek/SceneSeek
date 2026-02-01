@@ -11,10 +11,12 @@ class SearchHistory(Base):
     __tablename__ = "search_history"
 
     query_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
+    ### Необяз
+    user_id: Mapped[int] = mapped_column( 
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False
     )
+    ###
     video_id: Mapped[int] = mapped_column(
         ForeignKey("videos.video_id", ondelete="CASCADE"),
         nullable=False

@@ -16,8 +16,9 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
     """
 
     try:
-        # broker
-        await broker_service.pub(message=file.filename, queue=broker_service.QUEUE_VIDEOS)
+        user = await database_service.get_user_by_id(user_id=user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="user not found")
         # minio
         minio_service.save_obj(
             obj=file,
@@ -33,6 +34,17 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
             fps=None,
             resolution=None,
             processing_status="pending"
+        )
+        # broker
+        await broker_service.pub(
+            message={
+                "video_id": video.video_id,
+                "user_id": user_id,
+                "object_name": file.filename,
+                "bucket": minio_service.BUCKET_VIDEOS_IN,
+                "video_url": video_path
+            },
+            queue=broker_service.QUEUE_VIDEOS
         )
         return UploadVideoResponseScheme(video_id=video.video_id, status=video.processing_status)
     except Exception as e:
