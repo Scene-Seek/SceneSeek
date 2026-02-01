@@ -8,4 +8,4 @@ RUN apt-get update \
 RUN uv sync --frozen --no-install-project --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 COPY . .
-CMD ["python", "-u", "main.py"]
+CMD ["faststream", "run", "main:app"]

@@ -37,6 +37,22 @@ class MinioService:
             content_type=obj.content_type
         )
 
+    def get_presigned_url_internal(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        expires_seconds: int = 3600
+    ) -> str:
+        """
+        Возвращает временную ссылку для скачивания/просмотра объекта.
+        """
+        return self.client.presigned_get_object(
+            bucket_name=bucket,
+            object_name=object_name,
+            expires=timedelta(seconds=expires_seconds)
+        )
+
     def get_presigned_url(
         self,
         *,
@@ -58,6 +74,15 @@ class MinioService:
         Удобный метод для видео в default bucket.
         """
         return self.get_presigned_url(
+            bucket=self.BUCKET_VIDEOS_IN,
+            object_name=object_name,
+            expires_seconds=expires_seconds
+        )
+    def get_video_url_internal(self, *, object_name: str, expires_seconds: int = 3600) -> str:
+        """
+        Удобный метод для видео в default bucket.
+        """
+        return self.get_presigned_url_internal(
             bucket=self.BUCKET_VIDEOS_IN,
             object_name=object_name,
             expires_seconds=expires_seconds

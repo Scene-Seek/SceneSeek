@@ -25,7 +25,7 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
             obj=file,
             bucket=minio_service.BUCKET_VIDEOS_IN
         )
-        video_path = minio_service.get_video_url(object_name=file.filename)
+        video_path = minio_service.get_video_url_internal(object_name=file.filename)
         # db
         video = await database_service.create_video( # TODO: configure atributes
             uploaded_by_user_id=user_id,
@@ -38,7 +38,7 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
         )
         # broker
         await broker_service.pub(
-            message={
+            message = {
                 "video_id": video.video_id,
                 "user_id": user_id,
                 "object_name": file.filename,

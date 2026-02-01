@@ -73,6 +73,7 @@ services:
   ml_worker:
     build: ./ml_worker
     container_name: ml_worker_ss
+    mem_limit: 10g
     restart: always
     depends_on:
       rabbitmq:

@@ -23,8 +23,8 @@ warnings.filterwarnings("ignore")
 @dataclass
 class IndexerConfig:
     frame_skip: int = 15
-    yolo_batch_size: int = 32
-    florence_batch_size: int = 6
+    yolo_batch_size: int = 16
+    florence_batch_size: int = 4
     motion_threshold: int = 1000
     yolo_conf: float = 0.25
     db_dsn: str = "postgresql://postgres:пароль@localhost:5432/sceneseek_test"
@@ -39,9 +39,17 @@ class VideoSearchEngine:
         self.config = config if config else IndexerConfig()
 
         self.pool: Optional[asyncpg.Pool] = None
-
         print(f"🚀 [Init] Запуск движка на {self.device}...")
         self._load_models()
+
+    async def _initialize_db(self) -> None:
+        try:
+            self.pool = await asyncpg.create_pool(dsn=self.config.db_dsn)
+
+            if self.pool is None:
+                raise ConnectionError("Не удалось создать пул соединений.")
+        except Exception as e:
+            print(f"Error: {e} пизда рулям")
 
     async def initialize_db(self) -> None:
         """
@@ -159,7 +167,14 @@ class VideoSearchEngine:
         self.embedder = SentenceTransformer("all-MiniLM-L6-v2", device=self.device)
         print(" └─ Готово.")
 
-    async def search(self, query: str, top_k: int = 5, min_score: float = 0.25) -> List[Dict[str, Any]]:
+    async def search(
+        self,
+        query: str,
+        *,
+        query_id: Optional[int] = None,
+        top_k: int = 5,
+        min_score: float = 0.25
+    ) -> List[Dict[str, Any]]:
         """
         Асинхронный семантический поиск.
         """
@@ -172,6 +187,7 @@ class VideoSearchEngine:
         # 2. SQL запрос
         sql = """
             SELECT
+                e.event_id,
                 v.video_id,
                 v.title,
                 e.timestamp,
@@ -185,6 +201,7 @@ class VideoSearchEngine:
         """
 
         results = []
+        db_rows: List[Tuple[int, float, Optional[bool]]] = []
         try:
             async with self.pool.acquire() as conn:
                 # Регистрируем вектор для текущего соединения, чтобы передать query_vec корректно
@@ -200,11 +217,23 @@ class VideoSearchEngine:
                     if isinstance(meta, str):
                         meta = json.loads(meta)
 
+                    score = round(float(r["score"]), 4)
                     results.append(
-                        {"video_id": r["video_id"], "video_title": r["title"], "timestamp": round(r["timestamp"], 2), "caption": r["caption"], "score": round(float(r["score"]), 4), "metadata": meta}
+                        {
+                            "video_id": r["video_id"],
+                            "video_title": r["title"],
+                            "timestamp": round(r["timestamp"], 2),
+                            "caption": r["caption"],
+                            "score": score,
+                            "metadata": meta
+                        }
                     )
+                    db_rows.append((r["event_id"], score, None))
         except Exception as e:
             print(f"❌ Ошибка поиска: {e}")
+
+        if query_id is not None and db_rows:
+            await self._insert_search_results(query_id=query_id, results=db_rows)
 
         return results
 
@@ -212,6 +241,7 @@ class VideoSearchEngine:
         """
         Главный пайплайн индексации.
         """
+        print("INFO: RUNNING: run_indexing")
         if self.config.debug_mode:
             self._setup_debug()
 
@@ -342,6 +372,29 @@ class VideoSearchEngine:
             await register_vector(conn)
             await conn.executemany(sql, data)
 
+    async def _insert_search_results(
+        self,
+        *,
+        query_id: int,
+        results: List[Tuple[int, float, Optional[bool]]]
+    ) -> None:
+        """
+        Сохранить результаты поиска.
+        results: [(found_event_id, similarity_score, is_relevant), ...]
+        """
+        if not self.pool or not results:
+            return
+
+        sql = """
+            INSERT INTO search_results (query_id, found_event_id, similarity_score, is_relevant)
+            VALUES ($1, $2, $3, $4)
+        """
+
+        data = [(query_id, event_id, score, is_relevant) for event_id, score, is_relevant in results]
+
+        async with self.pool.acquire() as conn:
+            await conn.executemany(sql, data)
+
     # --- ML PROCESSING (SYNCHRONOUS) ---
 
     def _check_motion_mog2(self, back_sub: cv2.BackgroundSubtractorMOG2, frame: np.ndarray, threshold: int) -> bool:
@@ -452,29 +505,29 @@ class VideoSearchEngine:
         os.makedirs(self.config.debug_dir, exist_ok=True)
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    async def main():
-        # DSN для asyncpg
-        dsn = "postgresql://postgres:пароль@localhost:5432/sceneseek_test"
-        conf = IndexerConfig(db_dsn=dsn, frame_skip=15)
+#     async def main():
+#         # DSN для asyncpg
+#         dsn = "postgresql://postgres:пароль@localhost:5432/sceneseek_test"
+#         conf = IndexerConfig(db_dsn=dsn, frame_skip=15)
 
-        engine = VideoSearchEngine(config=conf)
-        await engine.initialize_db()
+#         engine = VideoSearchEngine(config=conf)
+#         await engine.initialize_db()
 
-        try:
-            # Убедитесь, что файл существует
-            if os.path.exists("video.mp4"):
-                print("\n Индексация...")
-                await engine.run_indexing("video.mp4", user_id=1)
+#         try:
+#             # Убедитесь, что файл существует
+#             if os.path.exists("video.mp4"):
+#                 print("\n Индексация...")
+#                 await engine.run_indexing("video.mp4", user_id=1)
 
-                print("\n Поиск...")
-                results = await engine.search("a monkey")
-                for res in results:
-                    print(res)
-            else:
-                print("Файл video.mp4 не найден для теста.")
-        finally:
-            await engine.close()
+#                 print("\n Поиск...")
+#                 results = await engine.search("a monkey")
+#                 for res in results:
+#                     print(res)
+#             else:
+#                 print("Файл video.mp4 не найден для теста.")
+#         finally:
+#             await engine.close()
 
-    asyncio.run(main())
+#     asyncio.run(main())

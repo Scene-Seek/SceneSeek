@@ -2,27 +2,24 @@ import asyncpg
 from faststream import FastStream
 from pgvector.asyncpg import register_vector
 
-from broker import GatewayVideoSearchEngine, broker, set_engine
+from broker import broker, set_engine
 from config import settings
-from engine import IndexerConfig
+from engine import VideoSearchEngine, IndexerConfig
 
 app = FastStream(broker)
-
-
 @app.on_startup
-async def init_engine() -> None:
-    engine = GatewayVideoSearchEngine(
-        config=IndexerConfig(db_dsn=settings.DATABASE_URL)
+async def init_app() -> None:
+    conf = IndexerConfig(
+        db_dsn=settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql"),
+        frame_skip=15
     )
-    engine.pool = await asyncpg.create_pool(
-        dsn=settings.DATABASE_URL,
-        init=register_vector
-    )
+    engine = VideoSearchEngine(config=conf)
+    engine.pool = await asyncpg.create_pool(dsn=conf.db_dsn, init=register_vector)
     set_engine(engine)
 
 
 @app.on_shutdown
-async def close_engine() -> None:
+async def close_app() -> None:
     from broker import get_engine
 
     engine = get_engine()

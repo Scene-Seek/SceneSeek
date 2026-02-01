@@ -1,6 +1,5 @@
 """config"""
-# TODO сделать конфиг
-from errno import ENFILE
+
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
