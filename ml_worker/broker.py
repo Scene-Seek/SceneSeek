@@ -5,11 +5,10 @@ import os
 import tempfile
 from typing import Any
 from urllib.request import urlretrieve
-import cv2
-from faststream.rabbit import RabbitBroker
+
 from config import settings
 from engine import VideoSearchEngine
-
+from faststream.rabbit import RabbitBroker
 
 broker = RabbitBroker(url=settings.RABBITMQ_URL)
 # broker = RabbitBroker()
@@ -69,7 +68,6 @@ async def get_msg_videos(message: Any) -> None:
         os.remove(tmp_path)
 
 
-
 @broker.subscriber(queue=QUEUE_SEARCHES)
 async def get_msg_searches(message: Any) -> None:
     payload = _parse_payload(message) or {}
@@ -81,7 +79,20 @@ async def get_msg_searches(message: Any) -> None:
     if not query_text:
         return
 
-    current_engine = get_engine()
-    results = await current_engine.search(query=query_text, query_id=query_id)
-    if video_id is not None:
-        results = [r for r in results if r.get("video_id") == int(video_id)]
+    try:
+        current_engine = get_engine()
+        results = await current_engine.search(query=query_text, query_id=query_id)
+        if video_id is not None:
+            results = [r for r in results if r.get("video_id") == int(video_id)]
+
+        # Update search status to completed with embedding
+        if query_id is not None:
+            await current_engine.update_search_status(query_id=query_id, query_text=query_text, status="completed")
+    except Exception as e:
+        print(f"❌ [Search] Error processing search query_id={query_id}: {e}")
+        if query_id is not None:
+            try:
+                current_engine = get_engine()
+                await current_engine.update_search_status(query_id=query_id, query_text=query_text, status="failed")
+            except:
+                pass

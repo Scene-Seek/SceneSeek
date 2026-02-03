@@ -5,6 +5,7 @@ COPY pyproject.toml uv.lock ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
+ENV UV_HTTP_TIMEOUT=300
 RUN uv sync --frozen --no-install-project --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 COPY . .
