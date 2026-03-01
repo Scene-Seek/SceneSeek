@@ -61,7 +61,7 @@ class VideoSearchEngine:
 
         self.pool: Optional[asyncpg.Pool] = None
         self.executor = ThreadPoolExecutor(max_workers=2)  # For async YOLO + other CPU-bound tasks
-        print(f"🚀 [Init] Starting engine on {self.device}...")
+        print(f"Init] Starting engine on {self.device}...")
         self._load_models()
 
     async def _initialize_db(self) -> None:
@@ -71,7 +71,7 @@ class VideoSearchEngine:
             if self.pool is None:
                 raise ConnectionError("Failed to create database connection pool.")
         except Exception as e:
-            print(f"❌ [Database] Connection error: {e}")
+            print(f"[Database] Connection error: {e}")
 
     async def close(self) -> None:
         """Close database connection pool and executor."""
@@ -96,12 +96,13 @@ class VideoSearchEngine:
 
     # ====================== SEARCH OPERATIONS ======================
 
-    async def search(self, query: str, *, query_id: Optional[int] = None, top_k: int = 5, min_score: float = 0.25) -> List[Dict[str, Any]]:
+    async def search(self, query: str, *, query_id: Optional[int] = None, video_id: Optional[int] = None, top_k: int = 5, min_score: float = 0.25) -> List[Dict[str, Any]]:
         """Semantic search across indexed video events using query embedding.
 
         Args:
             query: Text query to search for
             query_id: Optional query ID for tracking results
+            video_id: Optional video ID to restrict search to a specific video
             top_k: Number of top results to return
             min_score: Minimum similarity score threshold
 
@@ -109,26 +110,43 @@ class VideoSearchEngine:
             List of matching events with metadata and scores
         """
         if not self.pool:
-            raise RuntimeError("Database not initialized. Call initialize_db() first.")
+            raise RuntimeError("Database not initialized. Call _initialize_db() first.")
 
         # Encode query text to embedding
         query_vec: List[float] = self.embedder.encode(query).tolist()
 
-        # Search database for similar events
-        sql = """
-            SELECT
-                e.event_id,
-                v.video_id,
-                v.title,
-                e.timestamp,
-                e.caption,
-                1 - (e.embedding <=> $1) as score,
-                e.yolo_metadata
-            FROM video_events e
-            JOIN videos v ON e.video_id = v.video_id
-            ORDER BY e.embedding <=> $1
-            LIMIT $2;
-        """
+        # Search database for similar events, optionally filtered by video_id
+        if video_id is not None:
+            sql = """
+                SELECT
+                    e.event_id,
+                    v.video_id,
+                    v.title,
+                    e.timestamp,
+                    e.caption,
+                    1 - (e.embedding <=> $1) as score,
+                    e.yolo_metadata
+                FROM video_events e
+                JOIN videos v ON e.video_id = v.video_id
+                WHERE e.video_id = $3
+                ORDER BY e.embedding <=> $1
+                LIMIT $2;
+            """
+        else:
+            sql = """
+                SELECT
+                    e.event_id,
+                    v.video_id,
+                    v.title,
+                    e.timestamp,
+                    e.caption,
+                    1 - (e.embedding <=> $1) as score,
+                    e.yolo_metadata
+                FROM video_events e
+                JOIN videos v ON e.video_id = v.video_id
+                ORDER BY e.embedding <=> $1
+                LIMIT $2;
+            """
 
         results = []
         db_rows: List[Tuple[int, float, Optional[bool]]] = []
@@ -136,7 +154,10 @@ class VideoSearchEngine:
             async with self.pool.acquire() as conn:
                 # Register vector type for current connection to pass query_vec correctly
                 await register_vector(conn)
-                rows = await conn.fetch(sql, query_vec, top_k)
+                if video_id is not None:
+                    rows = await conn.fetch(sql, query_vec, top_k, video_id)
+                else:
+                    rows = await conn.fetch(sql, query_vec, top_k)
 
                 for r in rows:
                     if r["score"] < min_score:
@@ -151,7 +172,7 @@ class VideoSearchEngine:
                     results.append({"video_id": r["video_id"], "video_title": r["title"], "timestamp": round(r["timestamp"], 2), "caption": r["caption"], "score": score, "metadata": meta})
                     db_rows.append((r["event_id"], score, None))
         except Exception as e:
-            print(f"❌ [Search] Error: {e}")
+            print(f"[Search] Error: {e}")
 
         if query_id is not None and db_rows:
             await self._insert_search_results(query_id=query_id, results=db_rows)
@@ -160,22 +181,27 @@ class VideoSearchEngine:
 
     # ====================== INDEXING OPERATIONS ======================
 
-    async def run_indexing(self, video_path: str, user_id: int = 1) -> None:
+    async def run_indexing(self, video_path: str, user_id: int = 1, video_id: int | None = None) -> None:
         """Main video indexing pipeline: extract frames, run ML models, save to DB.
 
         Args:
             video_path: Path to video file
             user_id: User ID who uploaded the video
+            video_id: Existing video ID from gateway (if provided, skip creating a new entry)
         """
         print("📹 [Indexing] Starting video processing...")
         if self.config.debug_mode:
             self._setup_debug()
 
         if not self.pool:
-            await self.initialize_db()
+            await self._initialize_db()
 
-        # 1. Register video in database
-        video_id = await self._create_video_entry(video_path, user_id)
+        # Use existing video_id from gateway, or create a new entry as fallback
+        if video_id is None:
+            video_id = await self._create_video_entry(video_path, user_id)
+        else:
+            # Mark existing video as indexing
+            await self._finalize_video_status(video_id, "indexing")
 
         cap: Optional[cv2.VideoCapture] = None
         try:
@@ -242,10 +268,10 @@ class VideoSearchEngine:
                 stats["indexed"] += count
 
             await self._finalize_video_status(video_id, "ready")
-            print(f"\n✅ [Indexing] Completed. Saved {stats['indexed']} events.")
+            print(f"\n[Indexing] Completed. Saved {stats['indexed']} events.")
 
         except Exception as e:
-            print(f"\n❌ [Indexing] Error: {e}")
+            print(f"\n[Indexing] Error: {e}")
             await self._finalize_video_status(video_id, "failed")
             import traceback
 
@@ -296,7 +322,7 @@ class VideoSearchEngine:
                 video_id = await conn.fetchval(sql, user_id, filename, video_path, duration, fps, resolution)
             return video_id
         except Exception as e:
-            print(f"❌ [Video Entry] Error: {e}")
+            print(f"[Video Entry] Error: {e}")
             raise
         finally:
             if cap is not None:
@@ -316,13 +342,13 @@ class VideoSearchEngine:
         async with self.pool.acquire() as conn:
             await conn.execute(sql, status, video_id)
 
-    async def update_search_status(self, query_id: int, query_text: str, status: str = "completed") -> None:
-        """Update search_history with query embedding after search completes.
+    async def update_search_status(self, query_id: int, query_text: str, status: str = "ready") -> None:
+        """Update search_history with query embedding and processing status after search completes.
 
         Args:
             query_id: Search query ID
             query_text: Original query text
-            status: Search status (completed, failed, etc.)
+            status: Search status (ready, not_found, failed, etc.)
         """
         if not self.pool:
             return
@@ -331,17 +357,18 @@ class VideoSearchEngine:
             # Encode query to embedding
             query_embedding = self.embedder.encode(query_text).tolist()
 
-            # Update search_history (idempotent)
+            # Update search_history with embedding and status
             sql = """
                 UPDATE search_history
-                SET query_embedding = $1
-                WHERE query_id = $2 AND query_embedding IS NULL
+                SET query_embedding = COALESCE(query_embedding, $1),
+                    processing_status = $2
+                WHERE query_id = $3
             """
             async with self.pool.acquire() as conn:
                 await register_vector(conn)
-                await conn.execute(sql, query_embedding, query_id)
+                await conn.execute(sql, query_embedding, status, query_id)
         except Exception as e:
-            print(f"⚠️  [Search Status] Error: {e}")
+            print(f"[Search Status] Error: {e}")
 
     async def _insert_events_batch(self, video_id: int, timestamps: Tuple[float, ...], captions: List[str], metas: List[Dict[str, int]], embeddings: np.ndarray) -> None:
         """Insert batch of video events to database.
@@ -502,7 +529,7 @@ class VideoSearchEngine:
             return len(images)
 
         except Exception as e:
-            print(f"❌ [Florence] Error: {e}")
+            print(f"[Florence] Error: {e}")
             import traceback
 
             traceback.print_exc()

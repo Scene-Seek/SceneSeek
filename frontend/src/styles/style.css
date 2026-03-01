@@ -1,11 +1,14 @@
 :root {
-    --test-border: 1px dashed black;
     --bg: #0f1115;
     --card: #1b1f2a;
     --text: #f0f3f8;
     --muted: #9aa4b2;
     --accent: #4f8cff;
+    --accent-hover: #6ba0ff;
     --border: #2b3242;
+    --success: #34d399;
+    --warning: #fbbf24;
+    --error: #f87171;
 }
 
 *, *::before, *::after {
@@ -84,6 +87,18 @@ Custom html els
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
+    width: 100%;
+}
+
+/* --- Video player strict containment --- */
+#videoPlayer {
+    max-width: 100%;
+    max-height: 420px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #000;
 }
 
 .actions {
@@ -96,6 +111,22 @@ Custom html els
     display: flex;
     gap: 0.5rem;
     align-items: center;
+}
+
+.status-line strong {
+    transition: color 0.2s;
+}
+.status-line strong.status-ready,
+.status-line strong.status-completed {
+    color: var(--success);
+}
+.status-line strong.status-pending,
+.status-line strong.status-indexing {
+    color: var(--warning);
+}
+.status-line strong.status-failed,
+.status-line strong.status-error {
+    color: var(--error);
 }
 
 .results-area {
@@ -127,6 +158,9 @@ button {
     color: white;
     cursor: pointer;
 }
+button:hover {
+    background: var(--accent-hover);
+}
 
 button[disabled] {
     opacity: 0.6;
@@ -136,6 +170,58 @@ button[disabled] {
 ul {
     list-style: none;
     padding-left: 0;
+}
+
+/* --- Result items --- */
+.result-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 0.5rem;
+    background: rgba(79, 140, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: background 0.15s;
+}
+.result-item:hover {
+    background: rgba(79, 140, 255, 0.14);
+}
+
+.result-seek-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+}
+.result-seek-btn:hover {
+    background: var(--accent-hover);
+    transform: scale(1.1);
+}
+
+.result-text {
+    flex: 1;
+    min-width: 0;
+}
+.result-time {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text);
+}
+.result-meta {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 2px;
 }
 
 li {

@@ -75,6 +75,13 @@ services:
     container_name: ml_worker_ss
     mem_limit: 10g
     restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       rabbitmq:
         condition: service_healthy
