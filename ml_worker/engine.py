@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import shutil
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -11,586 +10,451 @@ import asyncpg
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from pgvector.asyncpg import register_vector
 from PIL import Image
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModelForCausalLM, AutoProcessor
+from transformers import SiglipModel, SiglipProcessor
 from ultralytics import YOLO
-from ultralytics.engine.results import Results
 
 warnings.filterwarnings("ignore")
 
 
 @dataclass
 class IndexerConfig:
-    """Configuration for video indexing pipeline"""
+    """Configuration for video indexing pipeline."""
 
     frame_skip: int = 15
-    yolo_batch_size: int = 16
-    florence_batch_size: int = 4
-    motion_threshold: int = 1000
+    batch_size: int = 32
+    motion_threshold: int = 100
     yolo_conf: float = 0.25
+    model_path: str = "yolo26s.pt"
+    siglip_model_id: str = "google/siglip2-base-patch16-224"
     db_dsn: str = "postgresql://postgres:password@localhost:5432/sceneseek_test"
-    debug_mode: bool = False
-    debug_dir: str = "debug_output"
-    model_path: str = "yolov8n.pt"
-    florence_model_id: str = "microsoft/Florence-2-base-ft"
-    embedder_model: str = "all-MiniLM-L6-v2"
+    merge_threshold_sec: float = 2.0
+    min_hits_in_segment: int = 4
+    raw_search_limit: int = 5000
+    sql_min_similarity: float = 0.05
 
     @classmethod
-    def from_settings(cls, settings):
-        """Create IndexerConfig from Settings object"""
+    def from_settings(cls, settings: Any) -> "IndexerConfig":
         return cls(
-            frame_skip=settings.FRAME_SKIP,
-            yolo_batch_size=settings.YOLO_BATCH_SIZE,
-            florence_batch_size=settings.FLORENCE_BATCH_SIZE,
-            motion_threshold=settings.MOTION_THRESHOLD,
-            yolo_conf=settings.YOLO_CONF,
+            frame_skip=getattr(settings, "FRAME_SKIP", cls.frame_skip),
+            batch_size=getattr(settings, "BATCH_SIZE", cls.batch_size),
+            motion_threshold=getattr(settings, "MOTION_THRESHOLD", cls.motion_threshold),
+            yolo_conf=getattr(settings, "YOLO_CONF", cls.yolo_conf),
+            model_path=getattr(settings, "MODEL_PATH", getattr(settings, "YOLO_MODEL", cls.model_path)),
+            siglip_model_id=getattr(settings, "SIGLIP_MODEL_ID", getattr(settings, "CLIP_MODEL", cls.siglip_model_id)),
+            raw_search_limit=getattr(settings, "RAW_SEARCH_LIMIT", cls.raw_search_limit),
+            sql_min_similarity=getattr(settings, "SQL_MIN_SIMILARITY", cls.sql_min_similarity),
             db_dsn=settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql"),
-            model_path=settings.MODEL_PATH,
-            florence_model_id=settings.FLORENCE_MODEL_ID,
-            embedder_model=settings.EMBEDDER_MODEL,
         )
 
 
 class VideoSearchEngine:
-    def __init__(self, config: Optional[IndexerConfig] = None, use_float16: bool = True) -> None:
+    def __init__(self, config: Optional[IndexerConfig] = None) -> None:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.use_float16 = use_float16 and self.device == "cuda"
         self.config = config if config else IndexerConfig()
-
         self.pool: Optional[asyncpg.Pool] = None
-        self.executor = ThreadPoolExecutor(max_workers=2)  # For async YOLO + other CPU-bound tasks
-        print(f"Init] Starting engine on {self.device}...")
+        self.executor = ThreadPoolExecutor(max_workers=2)
+
+        print(f"[Init] Starting engine on {self.device}...")
         self._load_models()
 
-    async def _initialize_db(self) -> None:
-        try:
-            self.pool = await asyncpg.create_pool(dsn=self.config.db_dsn)
-
-            if self.pool is None:
-                raise ConnectionError("Failed to create database connection pool.")
-        except Exception as e:
-            print(f"[Database] Connection error: {e}")
-
-    async def close(self) -> None:
-        """Close database connection pool and executor."""
-        if self.pool:
-            await self.pool.close()
-        if self.executor:
-            self.executor.shutdown(wait=True)
-
     def _load_models(self) -> None:
-        """Load YOLO, Florence, and embedding models."""
-        print(" ├─ [1/3] YOLOv8...")
-        self.yolo = YOLO(self.config.model_path)
+        print(f"[1/2] YOLO ({self.config.model_path})...")
+        self.detector = YOLO(self.config.model_path, verbose=False)
 
-        print(" ├─ [2/3] Florence-2...")
-        dtype = torch.float16 if self.use_float16 else torch.float32
-        self.fl_model = AutoModelForCausalLM.from_pretrained(self.config.florence_model_id, trust_remote_code=True, torch_dtype=dtype).to(self.device).eval()
-        self.fl_processor = AutoProcessor.from_pretrained(self.config.florence_model_id, trust_remote_code=True)
-
-        print(" ├─ [3/3] Embedder...")
-        self.embedder = SentenceTransformer(self.config.embedder_model, device=self.device)
+        print(f"[2/2] SigLIP ({self.config.siglip_model_id})...")
+        self.siglip_model = SiglipModel.from_pretrained(self.config.siglip_model_id).to(self.device).eval()
+        self.siglip_processor = SiglipProcessor.from_pretrained(self.config.siglip_model_id)
         print(" └─ Done.")
 
-    # ====================== SEARCH OPERATIONS ======================
+    async def close(self) -> None:
+        if self.pool:
+            await self.pool.close()
+        self.executor.shutdown(wait=True)
 
-    async def search(self, query: str, *, query_id: Optional[int] = None, video_id: Optional[int] = None, top_k: int = 5, min_score: float = 0.25) -> List[Dict[str, Any]]:
-        """Semantic search across indexed video events using query embedding.
-
-        Args:
-            query: Text query to search for
-            query_id: Optional query ID for tracking results
-            video_id: Optional video ID to restrict search to a specific video
-            top_k: Number of top results to return
-            min_score: Minimum similarity score threshold
-
-        Returns:
-            List of matching events with metadata and scores
-        """
+    async def _initialize_db(self) -> None:
         if not self.pool:
-            raise RuntimeError("Database not initialized. Call _initialize_db() first.")
+            self.pool = await asyncpg.create_pool(dsn=self.config.db_dsn, init=register_vector)
 
-        # Encode query text to embedding
-        query_vec: List[float] = self.embedder.encode(query).tolist()
-
-        # Search database for similar events, optionally filtered by video_id
-        if video_id is not None:
-            sql = """
-                SELECT
-                    e.event_id,
-                    v.video_id,
-                    v.title,
-                    e.timestamp,
-                    e.caption,
-                    1 - (e.embedding <=> $1) as score,
-                    e.yolo_metadata
-                FROM video_events e
-                JOIN videos v ON e.video_id = v.video_id
-                WHERE e.video_id = $3
-                ORDER BY e.embedding <=> $1
-                LIMIT $2;
-            """
-        else:
-            sql = """
-                SELECT
-                    e.event_id,
-                    v.video_id,
-                    v.title,
-                    e.timestamp,
-                    e.caption,
-                    1 - (e.embedding <=> $1) as score,
-                    e.yolo_metadata
-                FROM video_events e
-                JOIN videos v ON e.video_id = v.video_id
-                ORDER BY e.embedding <=> $1
-                LIMIT $2;
-            """
-
-        results = []
-        db_rows: List[Tuple[int, float, Optional[bool]]] = []
-        try:
-            async with self.pool.acquire() as conn:
-                # Register vector type for current connection to pass query_vec correctly
-                await register_vector(conn)
-                if video_id is not None:
-                    rows = await conn.fetch(sql, query_vec, top_k, video_id)
-                else:
-                    rows = await conn.fetch(sql, query_vec, top_k)
-
-                for r in rows:
-                    if r["score"] < min_score:
-                        continue
-
-                    # Parse YOLO metadata
-                    meta = r["yolo_metadata"]
-                    if isinstance(meta, str):
-                        meta = json.loads(meta)
-
-                    score = round(float(r["score"]), 4)
-                    results.append({"video_id": r["video_id"], "video_title": r["title"], "timestamp": round(r["timestamp"], 2), "caption": r["caption"], "score": score, "metadata": meta})
-                    db_rows.append((r["event_id"], score, None))
-        except Exception as e:
-            print(f"[Search] Error: {e}")
-
-        if query_id is not None and db_rows:
-            await self._insert_search_results(query_id=query_id, results=db_rows)
-
-        return results
-
-    # ====================== INDEXING OPERATIONS ======================
+    # ====================== INDEXING LOGIC ======================
 
     async def run_indexing(self, video_path: str, user_id: int = 1, video_id: int | None = None) -> None:
-        """Main video indexing pipeline: extract frames, run ML models, save to DB.
+        await self._initialize_db()
 
-        Args:
-            video_path: Path to video file
-            user_id: User ID who uploaded the video
-            video_id: Existing video ID from gateway (if provided, skip creating a new entry)
-        """
-        print("📹 [Indexing] Starting video processing...")
-        if self.config.debug_mode:
-            self._setup_debug()
-
-        if not self.pool:
-            await self._initialize_db()
-
-        # Use existing video_id from gateway, or create a new entry as fallback
         if video_id is None:
             video_id = await self._create_video_entry(video_path, user_id)
         else:
-            # Mark existing video as indexing
             await self._finalize_video_status(video_id, "indexing")
 
-        cap: Optional[cv2.VideoCapture] = None
-        try:
-            cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                raise IOError(f"Failed to open video: {video_path}")
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise IOError(f"Failed to open video: {video_path}")
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not fps:
+            fps = 25.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        back_sub = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=32, detectShadows=False)
 
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            duration = total_frames / fps if fps > 0 else 0
+        img_buffer: List[Image.Image] = []
+        meta_buffer: List[Dict[str, Any]] = []
+        frame_idx = 0
+        indexed_count = 0
 
-            # Motion detection via background subtraction
-            back_sub = cv2.createBackgroundSubtractorMOG2(history=100, varThreshold=25, detectShadows=False)
+        print(f"[Indexing] Processing {os.path.basename(video_path)}")
 
-            yolo_buffer: List[Tuple[np.ndarray, float]] = []
-            florence_queue: List[Tuple[Image.Image, float, Dict[str, int]]] = []
+        while True:
+            success, frame = cap.read()
+            if not success:
+                break
 
-            # State: {'counts': dict, 'centers': list}
-            prev_yolo_state: Optional[Dict[str, Any]] = None
-
-            frame_idx = 0
-            stats = {"motion_skip": 0, "yolo_skip": 0, "indexed": 0}
-
-            while True:
-                success, frame = cap.read()
-                if not success:
-                    break
-
-                # Check for motion in frame
-                is_motion = False
-                if frame_idx % 5 == 0:
-                    is_motion = self._check_motion_mog2(back_sub, frame, self.config.motion_threshold)
-
-                # Process frames at configured interval
-                if frame_idx % self.config.frame_skip == 0:
-                    timestamp = frame_idx / fps
-
-                    if not is_motion:
-                        stats["motion_skip"] += 1
-                        frame_idx += 1
-                        continue
-
-                    yolo_buffer.append((frame, timestamp))
-
-                    # Process YOLO batch async (non-blocking)
-                    if len(yolo_buffer) >= self.config.yolo_batch_size:
-                        prev_yolo_state = await self._process_yolo_batch_async(yolo_buffer, florence_queue, prev_yolo_state, stats)
-                        yolo_buffer = []
-                        print(f" ⏳ {timestamp:.1f}s / {duration:.1f}s", end="\r")
-
-                    # Process Florence batch and save to DB
-                    if len(florence_queue) >= self.config.florence_batch_size:
-                        count = await self._process_florence_batch_and_save(florence_queue, video_id)
-                        stats["indexed"] += count
-                        florence_queue = []
-
+            if frame_idx % self.config.frame_skip != 0:
                 frame_idx += 1
+                continue
 
-            # Process remaining buffered items
-            if yolo_buffer:
-                prev_yolo_state = await self._process_yolo_batch_async(yolo_buffer, florence_queue, prev_yolo_state, stats)
-            if florence_queue:
-                count = await self._process_florence_batch_and_save(florence_queue, video_id)
-                stats["indexed"] += count
+            ts = frame_idx / fps
+            indexed_count += await self._process_frame_for_indexing(video_id, frame, ts, back_sub, img_buffer, meta_buffer)
 
-            await self._finalize_video_status(video_id, "ready")
-            print(f"\n[Indexing] Completed. Saved {stats['indexed']} events.")
+            frame_idx += 1
+            if frame_idx % 500 == 0:
+                print(f"   Progress: {frame_idx}/{total_frames} frames", end="\r")
 
-        except Exception as e:
-            print(f"\n[Indexing] Error: {e}")
-            await self._finalize_video_status(video_id, "failed")
-            import traceback
+        if img_buffer:
+            await self._process_and_save_batch(video_id, img_buffer, meta_buffer)
+            indexed_count += len(img_buffer)
 
-            traceback.print_exc()
-        finally:
-            # Guaranteed resource cleanup
-            if cap is not None:
-                cap.release()
-                cap = None
-            yolo_buffer.clear()
-            florence_queue.clear()
+        await self._finalize_video_status(video_id, "ready")
+        cap.release()
 
-    # ====================== DATABASE OPERATIONS ======================
+        print(f"\n[Indexing] Complete. Saved {indexed_count} events.")
+
+    async def _process_frame_for_indexing(
+        self,
+        video_id: int,
+        frame: np.ndarray,
+        ts: float,
+        back_sub: cv2.BackgroundSubtractor,
+        img_buffer: List[Image.Image],
+        meta_buffer: List[Dict[str, Any]],
+    ) -> int:
+        if self._should_skip_by_motion(frame, back_sub):
+            return 0
+
+        self._append_frame_views(frame, ts, img_buffer, meta_buffer)
+
+        if len(img_buffer) < self.config.batch_size:
+            return 0
+
+        saved_count = len(img_buffer)
+        await self._process_and_save_batch(video_id, img_buffer, meta_buffer)
+        img_buffer.clear()
+        meta_buffer.clear()
+        return saved_count
+
+    def _should_skip_by_motion(self, frame: np.ndarray, back_sub: cv2.BackgroundSubtractor) -> bool:
+        small = cv2.resize(frame, (320, 240))
+        return cv2.countNonZero(back_sub.apply(small)) < self.config.motion_threshold
+
+    def _append_frame_views(
+        self,
+        frame: np.ndarray,
+        ts: float,
+        img_buffer: List[Image.Image],
+        meta_buffer: List[Dict[str, Any]],
+    ) -> None:
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb_frame)
+
+        img_buffer.append(pil_img.resize((224, 224)))
+        meta_buffer.append(
+            {
+                "ts": ts,
+                "bbox": [0, 0, frame.shape[1], frame.shape[0]],
+                "type": "global",
+            }
+        )
+
+        results = self.detector(frame, verbose=False, conf=self.config.yolo_conf)[0]
+        for box in results.boxes.xyxy:
+            coords = box.tolist()
+            crop = self._get_padding_crop(pil_img, coords)
+            img_buffer.append(crop.resize((224, 224)))
+            meta_buffer.append({"ts": ts, "bbox": coords, "type": "local"})
+
+    def _get_padding_crop(self, pil_img: Image.Image, box: List[float], padding: float = 0.25) -> Image.Image:
+        w, h = pil_img.size
+        x1, y1, x2, y2 = box
+        bw, bh = x2 - x1, y2 - y1
+        return pil_img.crop((max(0, x1 - bw * padding), max(0, y1 - bh * padding), min(w, x2 + bw * padding), min(h, y2 + bh * padding)))
+
+    async def _process_and_save_batch(self, video_id: int, images: List[Image.Image], metas: List[Dict[str, Any]]) -> None:
+        loop = asyncio.get_running_loop()
+        vectors = await loop.run_in_executor(self.executor, self._vectorize_images_sync, images)
+
+        sql = """
+            INSERT INTO video_events (video_id, timestamp, caption, yolo_metadata, embedding)
+            VALUES ($1, $2, $3, $4, $5)
+        """
+        batch_data = []
+        for vector, meta in zip(vectors, metas):
+            yolo_metadata = {"bbox": meta["bbox"], "type": meta["type"]}
+            batch_data.append((video_id, meta["ts"], None, json.dumps(yolo_metadata), vector.tolist()))
+
+        async with self.pool.acquire() as conn:
+            await conn.executemany(sql, batch_data)
+
+    def _extract_tensor(self, outputs: Any) -> torch.Tensor:
+        if hasattr(outputs, "pooler_output"):
+            return outputs.pooler_output
+        if isinstance(outputs, (list, tuple)):
+            return outputs[0]
+        return outputs
+
+    @torch.inference_mode()
+    def _vectorize_images_sync(self, images: List[Image.Image]) -> np.ndarray:
+        if not images:
+            return np.array([])
+        inputs = self.siglip_processor(images=images, return_tensors="pt").to(self.device)
+        with torch.inference_mode():
+            outputs = self.siglip_model.get_image_features(**inputs)
+            features = self._extract_tensor(outputs)
+            features = F.normalize(features, p=2, dim=-1)
+        return features.cpu().numpy()
+
+    @torch.inference_mode()
+    def _vectorize_text_sync(self, query: str) -> np.ndarray:
+        full_query = f"a photo of {query}"
+        inputs = self.siglip_processor(text=[full_query], return_tensors="pt", padding="max_length").to(self.device)
+        outputs = self.siglip_model.get_text_features(**inputs)
+        text_vec = self._extract_tensor(outputs)
+        text_vec = F.normalize(text_vec, p=2, dim=-1)
+        return text_vec.cpu().numpy()[0]
+
+    # ====================== SEARCH LOGIC ======================
+
+    async def search(
+        self,
+        query: str,
+        *,
+        query_id: Optional[int] = None,
+        video_id: Optional[int] = None,
+        top_k: int = 5,
+        min_score: float = 2.0,
+        merge_threshold: Optional[float] = None,
+        min_hits_in_segment: Optional[int] = None,
+        raw_limit: Optional[int] = None,
+        sql_min_similarity: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        await self._initialize_db()
+
+        loop = asyncio.get_running_loop()
+        text_vec = await loop.run_in_executor(self.executor, self._vectorize_text_sync, query)
+
+        raw_limit_value = raw_limit if raw_limit is not None else self.config.raw_search_limit
+        sql_min_similarity_value = sql_min_similarity if sql_min_similarity is not None else self.config.sql_min_similarity
+
+        rows = await self._fetch_search_source_rows(
+            video_id=video_id,
+            query_vec=text_vec,
+            min_similarity=sql_min_similarity_value,
+            raw_limit=max(top_k, raw_limit_value),
+        )
+        if not rows:
+            return []
+
+        raw_hits = self._build_scored_hits(rows, min_score)
+        if not raw_hits:
+            return []
+
+        merge_threshold_sec = merge_threshold if merge_threshold is not None else self.config.merge_threshold_sec
+        min_segment_hits = min_hits_in_segment if min_hits_in_segment is not None else self.config.min_hits_in_segment
+
+        segments = self._cluster_hits(raw_hits, merge_threshold_sec)
+        results = self._build_segment_results(segments, min_segment_hits)
+
+        results.sort(key=lambda item: item["score"], reverse=True)
+        final_results = results[:top_k]
+
+        if query_id is not None:
+            await self._insert_search_results(query_id=query_id, results=final_results)
+
+        return final_results
+
+    async def _fetch_search_source_rows(
+        self,
+        *,
+        video_id: Optional[int],
+        query_vec: np.ndarray,
+        min_similarity: float,
+        raw_limit: int,
+    ) -> List[asyncpg.Record]:
+        sql = """
+            SELECT
+                e.event_id,
+                e.video_id,
+                v.title,
+                e.timestamp,
+                e.yolo_metadata,
+                (1 - (e.embedding <=> $1::vector)) AS score
+            FROM video_events e
+            JOIN videos v ON e.video_id = v.video_id
+            WHERE e.embedding IS NOT NULL
+              AND ($2::int IS NULL OR e.video_id = $2)
+              AND (1 - (e.embedding <=> $1::vector)) >= $3
+            ORDER BY e.embedding <=> $1::vector
+            LIMIT $4
+        """
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(sql, query_vec.tolist(), video_id, float(min_similarity), int(raw_limit))
+
+    def _build_scored_hits(self, rows: List[asyncpg.Record], min_score: float) -> List[Dict[str, Any]]:
+        parsed_rows: List[Dict[str, Any]] = []
+        scores: List[float] = []
+        for row in rows:
+            meta = row["yolo_metadata"]
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+
+            score = float(row["score"])
+            scores.append(score)
+
+            parsed_rows.append(
+                {
+                    "event_id": int(row["event_id"]),
+                    "video_id": int(row["video_id"]),
+                    "video_title": row["title"],
+                    "ts": float(row["timestamp"]),
+                    "score": score,
+                    "bbox": meta.get("bbox", []),
+                    "type": meta.get("type", "unknown"),
+                }
+            )
+
+        if not parsed_rows:
+            return []
+
+        scores_np = np.asarray(scores, dtype=np.float32)
+        mean_score = float(np.mean(scores_np))
+        std_score = float(np.std(scores_np))
+        dynamic_threshold = max(0.05, mean_score + float(min_score) * std_score)
+
+        frame_best_hits: Dict[Tuple[int, float], Dict[str, Any]] = {}
+        for hit in parsed_rows:
+            if hit["score"] < dynamic_threshold:
+                continue
+            key = (hit["video_id"], round(hit["ts"], 6))
+            if key not in frame_best_hits or hit["score"] > frame_best_hits[key]["score"]:
+                frame_best_hits[key] = hit.copy()
+
+        hits = list(frame_best_hits.values())
+        hits.sort(key=lambda item: (item["video_id"], item["ts"]))
+        return hits
+
+    def _cluster_hits(self, raw_hits: List[Dict[str, Any]], merge_threshold_sec: float) -> List[List[Dict[str, Any]]]:
+        per_video_hits: Dict[int, List[Dict[str, Any]]] = {}
+        for hit in raw_hits:
+            per_video_hits.setdefault(hit["video_id"], []).append(hit)
+
+        segments: List[List[Dict[str, Any]]] = []
+        for hits in per_video_hits.values():
+            current_segment = [hits[0]]
+            for hit in hits[1:]:
+                if hit["ts"] - current_segment[-1]["ts"] <= merge_threshold_sec:
+                    current_segment.append(hit)
+                else:
+                    segments.append(current_segment)
+                    current_segment = [hit]
+            segments.append(current_segment)
+        return segments
+
+    def _build_segment_results(self, segments: List[List[Dict[str, Any]]], min_segment_hits: int) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for segment in segments:
+            if len(segment) < min_segment_hits:
+                continue
+            best_hit = max(segment, key=lambda item: item["score"])
+            results.append(
+                {
+                    "event_id": best_hit["event_id"],
+                    "video_id": best_hit["video_id"],
+                    "video_title": best_hit["video_title"],
+                    "start": round(segment[0]["ts"], 2),
+                    "end": round(segment[-1]["ts"], 2),
+                    "best_ts": round(best_hit["ts"], 2),
+                    "score": round(best_hit["score"], 4),
+                    "bbox": best_hit["bbox"],
+                    "type": best_hit["type"],
+                }
+            )
+        return results
+
+    async def update_search_status(self, query_id: int, query_text: str, status: str = "ready") -> None:
+        await self._initialize_db()
+        loop = asyncio.get_running_loop()
+        query_embedding = await loop.run_in_executor(self.executor, self._vectorize_text_sync, query_text)
+
+        sql = """
+            UPDATE search_history
+            SET query_embedding = COALESCE(query_embedding, $1),
+                processing_status = $2
+            WHERE query_id = $3
+        """
+        async with self.pool.acquire() as conn:
+            await conn.execute(sql, query_embedding.tolist(), status, query_id)
+
+    async def _insert_search_results(self, *, query_id: int, results: List[Dict[str, Any]]) -> None:
+        if not results:
+            return
+        sql = """
+            INSERT INTO search_results
+              (query_id, found_event_id, similarity_score, segment_start, segment_end, best_ts, bbox, hit_type, is_relevant)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """
+        data = [
+            (
+                query_id,
+                int(item["event_id"]),
+                float(item["score"]),
+                float(item["start"]),
+                float(item["end"]),
+                float(item["best_ts"]),
+                json.dumps(item.get("bbox", [])),
+                item.get("type", "unknown"),
+                None,
+            )
+            for item in results
+        ]
+        async with self.pool.acquire() as conn:
+            await conn.executemany(sql, data)
+
+    # ====================== DATABASE HELPERS ======================
 
     async def _create_video_entry(self, video_path: str, user_id: int) -> int:
-        """Create video entry in database and return video ID.
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        duration = frame_count / fps if fps else 0.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
 
-        Args:
-            video_path: Path to video file
-            user_id: User ID who uploaded
-
-        Returns:
-            video_id from database
-        """
-        cap: Optional[cv2.VideoCapture] = None
-        try:
-            cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                raise IOError(f"Cannot open video: {video_path}")
-
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            duration = frame_count / fps if fps else 0.0
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-            filename = os.path.basename(video_path)
-            resolution = f"{width}x{height}"
-
-            sql = """
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                """
                 INSERT INTO videos
                   (uploaded_by_user_id, title, path, duration, fps, resolution, processing_status)
                 VALUES ($1, $2, $3, $4, $5, $6, 'indexing')
                 RETURNING video_id
-            """
-
-            async with self.pool.acquire() as conn:
-                video_id = await conn.fetchval(sql, user_id, filename, video_path, duration, fps, resolution)
-            return video_id
-        except Exception as e:
-            print(f"[Video Entry] Error: {e}")
-            raise
-        finally:
-            if cap is not None:
-                cap.release()
-                cap = None
+                """,
+                user_id,
+                os.path.basename(video_path),
+                video_path,
+                duration,
+                fps,
+                f"{width}x{height}",
+            )
 
     async def _finalize_video_status(self, video_id: int, status: str) -> None:
-        """Update video processing status.
-
-        Args:
-            video_id: Video ID
-            status: New status (ready, failed, indexing, etc.)
-        """
-        if not self.pool:
-            return
-        sql = "UPDATE videos SET processing_status = $1 WHERE video_id = $2"
         async with self.pool.acquire() as conn:
-            await conn.execute(sql, status, video_id)
-
-    async def update_search_status(self, query_id: int, query_text: str, status: str = "ready") -> None:
-        """Update search_history with query embedding and processing status after search completes.
-
-        Args:
-            query_id: Search query ID
-            query_text: Original query text
-            status: Search status (ready, not_found, failed, etc.)
-        """
-        if not self.pool:
-            return
-
-        try:
-            # Encode query to embedding
-            query_embedding = self.embedder.encode(query_text).tolist()
-
-            # Update search_history with embedding and status
-            sql = """
-                UPDATE search_history
-                SET query_embedding = COALESCE(query_embedding, $1),
-                    processing_status = $2
-                WHERE query_id = $3
-            """
-            async with self.pool.acquire() as conn:
-                await register_vector(conn)
-                await conn.execute(sql, query_embedding, status, query_id)
-        except Exception as e:
-            print(f"[Search Status] Error: {e}")
-
-    async def _insert_events_batch(self, video_id: int, timestamps: Tuple[float, ...], captions: List[str], metas: List[Dict[str, int]], embeddings: np.ndarray) -> None:
-        """Insert batch of video events to database.
-
-        Args:
-            video_id: Video ID
-            timestamps: Frame timestamps
-            captions: Florence captions for frames
-            metas: YOLO detection metadata
-            embeddings: Sentence transformer embeddings
-        """
-        sql = """
-            INSERT INTO video_events
-              (video_id, timestamp, caption, yolo_metadata, embedding)
-            VALUES ($1, $2, $3, $4, $5)
-        """
-
-        data = []
-        for i in range(len(timestamps)):
-            # Convert numpy array to list for safety
-            vector_data = embeddings[i].tolist() if hasattr(embeddings[i], "tolist") else embeddings[i]
-            meta_json = json.dumps(metas[i])
-            data.append((video_id, timestamps[i], captions[i], meta_json, vector_data))
-
-        async with self.pool.acquire() as conn:
-            await register_vector(conn)
-            await conn.executemany(sql, data)
-
-    async def _insert_search_results(self, *, query_id: int, results: List[Tuple[int, float, Optional[bool]]]) -> None:
-        """Save search results to database.
-
-        Args:
-            query_id: Search query ID
-            results: List of (event_id, similarity_score, is_relevant) tuples
-        """
-        if not self.pool or not results:
-            return
-
-        sql = """
-            INSERT INTO search_results
-              (query_id, found_event_id, similarity_score, is_relevant)
-            VALUES ($1, $2, $3, $4)
-        """
-
-        data = [(query_id, event_id, score, is_relevant) for event_id, score, is_relevant in results]
-
-        async with self.pool.acquire() as conn:
-            await conn.executemany(sql, data)
-
-    # ====================== ML PROCESSING OPERATIONS ======================
-
-    def _check_motion_mog2(self, back_sub: cv2.BackgroundSubtractorMOG2, frame: np.ndarray, threshold: int) -> bool:
-        """Detect motion in frame using background subtraction.
-
-        Args:
-            back_sub: OpenCV background subtractor
-            frame: Video frame (BGR)
-            threshold: Motion pixel count threshold
-
-        Returns:
-            True if motion detected, False otherwise
-        """
-        fg = back_sub.apply(frame, learningRate=-1)
-        fg = cv2.dilate(cv2.erode(fg, np.ones((3, 3), np.uint8)), np.ones((3, 3), np.uint8), iterations=2)
-        return cv2.countNonZero(fg) > threshold
-
-    def _process_yolo_batch_sync(
-        self, buffer: List[Tuple[np.ndarray, float]], output_queue: List[Tuple[Image.Image, float, Dict[str, int]]], prev_state: Optional[Dict[str, Any]], stats: Dict[str, int]
-    ) -> Dict[str, Any]:
-        """Synchronous YOLO object detection on frame batch.
-
-        Args:
-            buffer: List of (frame, timestamp) tuples
-            output_queue: Output queue to append detected frames
-            prev_state: Previous YOLO state for change detection
-            stats: Statistics dict to update
-
-        Returns:
-            Current YOLO state after processing
-        """
-        frames = [x[0] for x in buffer]
-
-        # YOLO inference
-        results: List[Results] = self.yolo(frames, verbose=False, iou=0.7, conf=self.config.yolo_conf)
-
-        current_prev = prev_state if prev_state else {"counts": {}, "centers": []}
-
-        for i, res in enumerate(results):
-            curr_state = self._extract_yolo_state(res)
-
-            if self._has_state_changed(current_prev, curr_state):
-                img_rgb = cv2.cvtColor(buffer[i][0], cv2.COLOR_BGR2RGB)
-                output_queue.append((Image.fromarray(img_rgb), buffer[i][1], curr_state["counts"]))
-                current_prev = curr_state
-            else:
-                stats["yolo_skip"] += 1
-
-        return current_prev
-
-    async def _process_yolo_batch_async(
-        self, buffer: List[Tuple[np.ndarray, float]], output_queue: List[Tuple[Image.Image, float, Dict[str, int]]], prev_state: Optional[Dict[str, Any]], stats: Dict[str, int]
-    ) -> Dict[str, Any]:
-        """Async wrapper for YOLO batch processing using ThreadPoolExecutor.
-
-        Args:
-            buffer: List of (frame, timestamp) tuples
-            output_queue: Output queue to append detected frames
-            prev_state: Previous YOLO state for change detection
-            stats: Statistics dict to update
-
-        Returns:
-            Current YOLO state after processing
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, self._process_yolo_batch_sync, buffer, output_queue, prev_state, stats)
-
-    async def _process_florence_batch_and_save(self, queue: List[Tuple[Image.Image, float, Dict[str, int]]], video_id: int) -> int:
-        """Process images with Florence-2, generate embeddings, and save to DB.
-
-        Args:
-            queue: List of (image, timestamp, yolo_metadata) tuples
-            video_id: Video ID for database insertion
-
-        Returns:
-            Number of frames processed successfully
-        """
-        if not queue:
-            return 0
-
-        images, timestamps, metas = zip(*queue)
-        task = "<MORE_DETAILED_CAPTION>"
-
-        try:
-            # Prepare inputs for Florence-2 model
-            inputs = self.fl_processor(text=[task] * len(images), images=list(images), return_tensors="pt").to(self.device)
-
-            if self.use_float16:
-                inputs["pixel_values"] = inputs["pixel_values"].to(dtype=torch.float16)
-
-            # Generate captions
-            with torch.inference_mode():
-                generated_ids = self.fl_model.generate(input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"], max_new_tokens=256, num_beams=1, do_sample=False, use_cache=True)
-
-            # Decode and post-process captions
-            texts = self.fl_processor.batch_decode(generated_ids, skip_special_tokens=False)
-
-            clean_texts = []
-            for i, t in enumerate(texts):
-                parsed = self.fl_processor.post_process_generation(t, task=task, image_size=images[i].size)
-                clean_texts.append(parsed[task])
-
-            # Generate sentence embeddings
-            embeddings = self.embedder.encode(clean_texts)
-
-            # Save to database
-            await self._insert_events_batch(video_id, timestamps, clean_texts, list(metas), embeddings)
-
-            return len(images)
-
-        except Exception as e:
-            print(f"[Florence] Error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return 0
-
-    def _extract_yolo_state(self, res: Results) -> Dict[str, Any]:
-        """Extract object counts and centers from YOLO detection result.
-
-        Args:
-            res: YOLO detection result
-
-        Returns:
-            Dictionary with 'counts' (class counts) and 'centers' (sorted centers)
-        """
-        state: Dict[str, Any] = {"counts": {}, "centers": []}
-
-        if res.boxes:
-            for box in res.boxes:
-                # Extract class name
-                label = res.names[int(box.cls[0])]
-                state["counts"][label] = state["counts"].get(label, 0) + 1
-
-                # Extract box center
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                center_x = (x1 + x2) / 2
-                center_y = (y1 + y2) / 2
-                state["centers"].append((center_x, center_y))
-
-        # Sort centers for deterministic comparison
-        state["centers"].sort()
-        return state
-
-    def _has_state_changed(self, prev: Dict[str, Any], curr: Dict[str, Any], threshold: int = 50) -> bool:
-        """Check if YOLO object state changed significantly.
-
-        Args:
-            prev: Previous state (counts, centers)
-            curr: Current state (counts, centers)
-            threshold: Distance threshold for considering movement
-
-        Returns:
-            True if object counts changed or objects moved significantly
-        """
-        # Check if object counts or composition changed
-        if prev.get("counts") != curr.get("counts"):
-            return True
-
-        # Check if objects moved significantly
-        prev_centers = prev.get("centers", [])
-        curr_centers = curr.get("centers", [])
-
-        if len(prev_centers) == len(curr_centers) and len(curr_centers) > 0:
-            # Calculate maximum displacement among all object pairs
-            max_distance = max(((p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2) ** 0.5 for p, c in zip(prev_centers, curr_centers))
-            if max_distance > threshold:
-                return True
-
-        return False
-
-    def _setup_debug(self) -> None:
-        """Initialize debug output directory (removes existing if present)."""
-        if os.path.exists(self.config.debug_dir):
-            shutil.rmtree(self.config.debug_dir)
-        os.makedirs(self.config.debug_dir, exist_ok=True)
+            await conn.execute("UPDATE videos SET processing_status = $1 WHERE video_id = $2", status, video_id)

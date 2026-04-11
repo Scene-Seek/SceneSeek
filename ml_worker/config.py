@@ -25,14 +25,18 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str
 
     # ML Worker Configuration
-    FRAME_SKIP: int = 15  # Extract frames every N frames
-    YOLO_BATCH_SIZE: int = 16  # Batch size for YOLO inference
-    FLORENCE_BATCH_SIZE: int = 4  # Batch size for Florence caption generation
-    MOTION_THRESHOLD: int = 1000  # Threshold for motion detection
-    YOLO_CONF: float = 0.25  # YOLO confidence threshold
-    MODEL_PATH: str = "yolov8n.pt"  # YOLO model path
-    FLORENCE_MODEL_ID: str = "microsoft/Florence-2-base-ft"  # Florence model ID
-    EMBEDDER_MODEL: str = "all-MiniLM-L6-v2"  # Sentence transformer model
+    FRAME_SKIP: int = 15  # Initial frame skip (adaptive skip overrides at runtime)
+    BATCH_SIZE: int = 32
+    MOTION_THRESHOLD: int = 100
+    YOLO_CONF: float = 0.25
+    MODEL_PATH: str = "yolo26s.pt"
+    SIGLIP_MODEL_ID: str = "google/siglip2-base-patch16-224"
+    RAW_SEARCH_LIMIT: int = 5000
+    SQL_MIN_SIMILARITY: float = 0.05
+
+    # Backward-compatible aliases
+    YOLO_MODEL: str = "yolo26s.pt"
+    CLIP_MODEL: str = "google/siglip2-base-patch16-224"
 
     @property
     def DATABASE_URL(self):

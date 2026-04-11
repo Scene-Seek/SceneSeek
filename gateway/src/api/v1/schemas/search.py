@@ -1,17 +1,16 @@
-from typing import Optional
-
 from pydantic import BaseModel
 from src.api.v1.schemas.common import StatusEnum
 
 
 class SearchResultItem(BaseModel):
-    """Отдельный результат поиска — сгруппированный временной интервал"""
+    """Результат поиска: временной сегмент с лучшим кадром и bbox."""
 
-    start_time: float
-    end_time: float
-    timestamp: float  # best timestamp for seeking
+    start: float
+    end: float
+    best_ts: float
     score: float
-    caption: Optional[str] = None
+    bbox: list[float]
+    type: str
 
 
 class UploadSearchRequestScheme(BaseModel):

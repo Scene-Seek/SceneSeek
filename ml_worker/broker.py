@@ -50,7 +50,7 @@ async def get_msg_videos(message: Any) -> None:
     video_id = payload.get("video_id")
     user_id = payload.get("user_id", 1)
     object_name = payload.get("object_name")
-    bucket = payload.get("bucket")
+    # bucket = payload.get("bucket")
     video_url = payload.get("video_url")
 
     if not video_url:
@@ -76,7 +76,7 @@ async def get_msg_videos(message: Any) -> None:
 async def get_msg_searches(message: Any) -> None:
     payload = _parse_payload(message) or {}
     query_id = payload.get("query_id")
-    user_id = payload.get("user_id")
+    # user_id = payload.get("user_id")
     video_id = payload.get("video_id")
     query_text = payload.get("query_text")
 
@@ -101,5 +101,5 @@ async def get_msg_searches(message: Any) -> None:
             try:
                 current_engine = get_engine()
                 await current_engine.update_search_status(query_id=query_id, query_text=query_text, status="failed")
-            except:
+            except Exception:
                 pass

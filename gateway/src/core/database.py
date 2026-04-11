@@ -17,3 +17,14 @@ async def create_tables():
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
         await conn.run_sync(Base.metadata.create_all)
+
+        # Keep startup resilient on both clean and previously initialized databases.
+        await conn.execute(text("ALTER TABLE IF EXISTS video_events ALTER COLUMN embedding TYPE vector(768);"))
+        await conn.execute(text("ALTER TABLE IF EXISTS search_history ALTER COLUMN query_embedding TYPE vector(768);"))
+        await conn.execute(text("ALTER TABLE IF EXISTS video_events ALTER COLUMN caption DROP NOT NULL;"))
+
+        await conn.execute(text("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS segment_start DOUBLE PRECISION;"))
+        await conn.execute(text("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS segment_end DOUBLE PRECISION;"))
+        await conn.execute(text("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS best_ts DOUBLE PRECISION;"))
+        await conn.execute(text("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS bbox JSONB DEFAULT '[]'::jsonb;"))
+        await conn.execute(text("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS hit_type VARCHAR(20);"))

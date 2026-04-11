@@ -3,7 +3,7 @@ services:
   db:
     image: pgvector/pgvector:pg15
     container_name: postgres_db_ss
-    restart: always
+    restart: on-failure
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASS}
@@ -16,7 +16,7 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: rabbitmq_ss
-    restart: always
+    restart: on-failure
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
@@ -34,7 +34,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: minio_ss
-    restart: always
+    restart: on-failure
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
@@ -50,7 +50,7 @@ services:
     ports:
       - "8000:8000"
     container_name: gateway_ss
-    restart: always
+    restart: on-failure
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -72,12 +72,15 @@ services:
   # backend-worker
   ml_worker:
     build: ./ml_worker
+    shm_size: '2gb'
     container_name: ml_worker_ss
-    mem_limit: 10g
-    restart: always
+    restart: on-failure
     deploy:
       resources:
+        limits:
+          memory: 10g
         reservations:
+          memory: 2g
           devices:
             - driver: nvidia
               count: all
@@ -90,6 +93,11 @@ services:
       minio:
         condition: service_started
     environment:
+      PYTHONUNBUFFERED: "1"
+      YOLO_CONFIG_DIR: /models/ultralytics
+      HF_TOKEN: ${HF_TOKEN}
+      HF_HOME: /models/huggingface
+      TORCH_HOME: /models/torch
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_USER: ${DB_USER}
@@ -100,11 +108,13 @@ services:
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    volumes:
+      - ./ml_cache:/models
   # frontend
   frontend:
     build: ./frontend
     container_name: frontend_ss
-    restart: always
+    restart: on-failure
     ports:
       - "3000:80"
 volumes:

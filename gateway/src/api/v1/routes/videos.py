@@ -1,3 +1,4 @@
+import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
@@ -7,6 +8,7 @@ from src.services.database_service import database_service
 from src.services.minio_service import minio_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/videos", response_model=UploadVideoResponseScheme)
@@ -42,9 +44,9 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
         return UploadVideoResponseScheme(video_id=video.video_id, status=video.processing_status)
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Unexpected error while uploading video")
+        raise HTTPException(status_code=500, detail="internal server error")
 
 
 @router.get("/videos/{video_id}", response_model=GetVideoResponseScheme)
@@ -72,6 +74,6 @@ async def get_videos(video_id: int):
         return GetVideoResponseScheme(video_id=video_id, video_path=video_url, status=video.processing_status)
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Unexpected error while getting video")
+        raise HTTPException(status_code=500, detail="internal server error")

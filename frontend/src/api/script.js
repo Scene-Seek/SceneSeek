@@ -65,10 +65,14 @@ function statusClass(raw) {
 }
 
 function formatTimestamp(seconds) {
-    if (seconds == null || isNaN(seconds)) return "??:??";
-    const totalSec = Math.floor(seconds);
-    const m = Math.floor(totalSec / 60);
+    if (seconds == null || Number.isNaN(Number(seconds))) return "??:??";
+    const totalSec = Math.floor(Number(seconds));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
     const s = totalSec % 60;
+    if (h > 0) {
+        return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
@@ -76,12 +80,67 @@ function formatTimeRange(startSec, endSec) {
     return `${formatTimestamp(startSec)} – ${formatTimestamp(endSec)}`;
 }
 
-function seekToTimestamp(seconds) {
-    if (videoPlayer && seconds != null && !isNaN(seconds)) {
-        videoPlayer.currentTime = seconds;
-        videoPlayer.hidden = false;
-        videoPlayer.play().catch(() => {});
+function toNumberOrNull(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function normalizeBbox(value) {
+    if (Array.isArray(value)) {
+        return value.map((v) => Number(v)).filter((v) => Number.isFinite(v));
     }
+    if (typeof value === "string") {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+                return parsed.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+            }
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
+function normalizeResultItem(item) {
+    const start = toNumberOrNull(item.start ?? item.start_time ?? item.segment_start);
+    const end = toNumberOrNull(item.end ?? item.end_time ?? item.segment_end);
+    const bestTs = toNumberOrNull(item.best_ts ?? item.bestTs ?? item.timestamp ?? item.time ?? item.t ?? start);
+    const score = toNumberOrNull(item.score ?? item.similarity_score);
+    const hitType = item.type ?? item.hit_type ?? item?.yolo_metadata?.type ?? item?.metadata?.type;
+    const bbox = normalizeBbox(item.bbox ?? item?.yolo_metadata?.bbox ?? item?.metadata?.bbox);
+
+    return {
+        start,
+        end,
+        bestTs,
+        score,
+        hitType,
+        bbox,
+    };
+}
+
+async function seekToTimestamp(seconds) {
+    const ts = toNumberOrNull(seconds);
+    if (!videoPlayer || ts == null || !videoPlayer.src) return;
+
+    videoPlayer.hidden = false;
+
+    if (videoPlayer.readyState < 1) {
+        await new Promise((resolve) => {
+            const onLoaded = () => {
+                videoPlayer.removeEventListener("loadedmetadata", onLoaded);
+                resolve();
+            };
+            videoPlayer.addEventListener("loadedmetadata", onLoaded, { once: true });
+            videoPlayer.load();
+            setTimeout(resolve, 1200);
+        });
+    }
+
+    const maxTime = Number.isFinite(videoPlayer.duration) ? Math.max(0, videoPlayer.duration - 0.05) : ts;
+    videoPlayer.currentTime = Math.min(Math.max(0, ts), maxTime);
+    videoPlayer.play().catch(() => {});
 }
 
 /**
@@ -91,11 +150,13 @@ function buildResultItem(item) {
     const li = document.createElement("li");
     li.className = "result-item";
 
-    const startTime = item.start_time;
-    const endTime = item.end_time;
-    const seekTime = item.start_time ?? item.timestamp ?? item.time ?? item.t;
-    const score = item.score ?? item.similarity_score;
-    const caption = item.caption;
+    const normalized = normalizeResultItem(item);
+    const startTime = normalized.start;
+    const endTime = normalized.end;
+    const seekTime = normalized.bestTs;
+    const score = normalized.score;
+    const hitType = normalized.hitType;
+    const bbox = normalized.bbox;
 
     // Play button
     const btn = document.createElement("button");
@@ -115,16 +176,25 @@ function buildResultItem(item) {
     const timeLine = document.createElement("div");
     timeLine.className = "result-time";
     if (startTime != null && endTime != null) {
-        timeLine.textContent = formatTimeRange(startTime, endTime);
+        timeLine.textContent = `${formatTimeRange(startTime, endTime)} (best: ${formatTimestamp(seekTime)})`;
     } else {
-        const ts = item.timestamp ?? item.time ?? item.t;
-        timeLine.textContent = ts != null ? formatTimestamp(ts) : "\u2014";
+        timeLine.textContent = seekTime != null ? formatTimestamp(seekTime) : "\u2014";
     }
     textDiv.appendChild(timeLine);
 
     const parts = [];
-    if (score != null) parts.push(`score: ${score}`);
-    if (caption) parts.push(caption);
+    if (score != null) parts.push(`score: ${score.toFixed(3)}`);
+    if (hitType === "local") {
+        parts.push("type: local object");
+    } else if (hitType === "global") {
+        parts.push("type: global context");
+    }
+    if (Array.isArray(bbox) && bbox.length === 4) {
+        const [x1, y1, x2, y2] = bbox.map((v) => Number(v));
+        if ([x1, y1, x2, y2].every((v) => !Number.isNaN(v))) {
+            parts.push(`bbox: [${x1.toFixed(0)}, ${y1.toFixed(0)}, ${x2.toFixed(0)}, ${y2.toFixed(0)}]`);
+        }
+    }
     if (parts.length) {
         const metaLine = document.createElement("div");
         metaLine.className = "result-meta";

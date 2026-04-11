@@ -10,7 +10,6 @@ app = FastStream(broker)
 
 @app.on_startup
 async def init_app() -> None:
-    # Create IndexerConfig from settings to use environment variables
     conf = IndexerConfig.from_settings(settings)
     engine = VideoSearchEngine(config=conf)
     engine.pool = await asyncpg.create_pool(dsn=conf.db_dsn, init=register_vector)
