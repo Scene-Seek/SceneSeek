@@ -1,12 +1,7 @@
-// Detect API base URL: if running in browser on host, use host IP; if running in container, use service name
 const API_BASE = (() => {
-    // If running in browser and hostname is 127.0.0.1 or localhost, it's on the host machine
-    // Use 127.0.0.1:8000 for local development
-    // If hostname is something else (e.g. from nginx in docker), try to infer the API location
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     const apiPort = 8000;
-    // For now, always use the host's gateway port
     return `${protocol}//${hostname}:${apiPort}/api/v1`;
 })();
 
@@ -25,26 +20,31 @@ const promptInput = document.getElementById("prompt-input");
 const searchStatus = document.getElementById("search-status");
 const resultsList = document.getElementById("results-list");
 const videoStatus = document.getElementById("video-status");
+const dropArea = document.getElementById("dropArea");
+const searchSubmitBtn = searchForm.querySelector('button[type="submit"]');
 
 let currentVideoUrl = null;
 let selectedFile = null;
 let userId = null;
 let videoId = null;
+let videoProcessingStatus = null;
+let isUploadingVideo = false;
+let isSearching = false;
+let videoStateVersion = 0;
+let searchStateVersion = 0;
 
-// Supported HTML5 video MIME types
 const SUPPORTED_VIDEO_TYPES = [
     "video/mp4", "video/webm", "video/ogg",
     "video/quicktime",
 ];
 
-// Human-readable status names
 const STATUS_LABELS = {
-    pending: "ожидание",
-    indexing: "индексация...",
-    ready: "готово",
-    completed: "завершено",
-    not_found: "ничего не найдено",
-    failed: "ошибка",
+    pending: "Ожидание",
+    indexing: "Индексация...",
+    ready: "Готово",
+    completed: "Завершено",
+    not_found: "Ничего не найдено",
+    failed: "Ошибка",
 };
 
 function statusLabel(raw) {
@@ -62,6 +62,52 @@ function statusClass(raw) {
     if (raw === "pending" || raw === "indexing") return "status-pending";
     if (raw === "failed" || raw === "error") return "status-failed";
     return "";
+}
+
+function isVideoReadyForSearch() {
+    return videoProcessingStatus === "ready" || videoProcessingStatus === "completed";
+}
+
+function syncUploadControls() {
+    const isLocked = isUploadingVideo || videoId !== null;
+    const hasVideo = Boolean(selectedFile || videoId || currentVideoUrl);
+
+    fileInput.disabled = isLocked;
+    uploadBtn.disabled = !selectedFile || isLocked;
+    removeBtn.hidden = !hasVideo;
+    removeBtn.disabled = isUploadingVideo || !hasVideo;
+
+    if (dropArea) {
+        dropArea.classList.toggle("is-disabled", isLocked);
+        dropArea.setAttribute("aria-disabled", String(isLocked));
+    }
+}
+
+function syncSearchControls() {
+    searchSubmitBtn.disabled = isSearching || !userId || !videoId || !isVideoReadyForSearch();
+}
+
+function revokeCurrentVideoUrl() {
+    if (currentVideoUrl) {
+        URL.revokeObjectURL(currentVideoUrl);
+        currentVideoUrl = null;
+    }
+}
+
+function resetVideoPreview() {
+    videoPlayer.pause();
+    videoPlayer.removeAttribute("src");
+    videoPlayer.load();
+    videoPlayer.hidden = true;
+    revokeCurrentVideoUrl();
+}
+
+function resetSearchUi() {
+    searchStateVersion += 1;
+    isSearching = false;
+    setStatus(searchStatus, "ожидание", "");
+    resultsList.innerHTML = "";
+    syncSearchControls();
 }
 
 function formatTimestamp(seconds) {
@@ -270,8 +316,10 @@ identifyForm.addEventListener("submit", async (event) => {
         });
         userId = data.user_id;
         setStatus(userStatus, `${data.nickname} (id: ${userId})`, "status-ready");
+        syncSearchControls();
     } catch (err) {
         setStatus(userStatus, "ошибка", "status-failed");
+        syncSearchControls();
         alert(`Ошибка идентификации: ${err.message}`);
     }
 });
@@ -281,6 +329,9 @@ identifyForm.addEventListener("submit", async (event) => {
 fileInput.addEventListener("change", (event) => {
     const file = event.target.files[0];
     if (file) {
+        videoStateVersion += 1;
+        videoId = null;
+        videoProcessingStatus = null;
         selectedFile = file;
         const mimeOk = file.type && SUPPORTED_VIDEO_TYPES.includes(file.type);
         if (!mimeOk && file.type) {
@@ -288,32 +339,33 @@ fileInput.addEventListener("change", (event) => {
         } else {
             setStatus(videoStatus, "готово к загрузке", "");
         }
-        if (currentVideoUrl) {
-            URL.revokeObjectURL(currentVideoUrl);
-        }
+        revokeCurrentVideoUrl();
         currentVideoUrl = URL.createObjectURL(file);
         videoPlayer.src = currentVideoUrl;
         videoPlayer.hidden = false;
         videoPlayer.load();
-        removeBtn.hidden = false;
+        resetSearchUi();
+        syncUploadControls();
     }
 });
 
 removeBtn.addEventListener("click", () => {
-    videoPlayer.pause();
-    videoPlayer.src = "";
-    videoPlayer.hidden = true;
-    removeBtn.hidden = true;
-    if (currentVideoUrl) {
-        URL.revokeObjectURL(currentVideoUrl);
-        currentVideoUrl = null;
-    }
+    videoStateVersion += 1;
+    videoProcessingStatus = null;
+    resetVideoPreview();
+    fileInput.value = "";
     selectedFile = null;
     videoId = null;
     setStatus(videoStatus, "не загружено", "");
+    resetSearchUi();
+    syncUploadControls();
+    syncSearchControls();
 });
 
 uploadBtn.addEventListener("click", async () => {
+    if (isUploadingVideo || videoId !== null) {
+        return;
+    }
     if (!userId) {
         alert("Сначала введите никнейм.");
         return;
@@ -322,38 +374,65 @@ uploadBtn.addEventListener("click", async () => {
         alert("Выберите видео.");
         return;
     }
+
+    const currentVideoVersion = ++videoStateVersion;
+    isUploadingVideo = true;
+    videoProcessingStatus = "pending";
+    syncUploadControls();
+    syncSearchControls();
     setStatus(videoStatus, "загрузка на сервер...", "status-pending");
     const formData = new FormData();
     formData.append("file", selectedFile);
     formData.append("user_id", String(userId));
+
     try {
         const data = await requestJson(`${API_BASE}/videos`, {
             method: "POST",
             body: formData
         });
+        if (currentVideoVersion !== videoStateVersion) return;
+
         videoId = data.video_id;
+        videoProcessingStatus = data.status;
         setStatus(videoStatus, `загружено (id: ${videoId}) \u2014 ${statusLabel(data.status)}`, statusClass(data.status));
-        // Start polling for indexing completion
-        pollVideoStatus(videoId);
+        void pollVideoStatus(videoId, currentVideoVersion);
     } catch (err) {
+        if (currentVideoVersion !== videoStateVersion) return;
+
+        videoProcessingStatus = null;
         setStatus(videoStatus, "ошибка загрузки", "status-failed");
         alert(`Ошибка загрузки: ${err.message}`);
+    } finally {
+        if (currentVideoVersion === videoStateVersion) {
+            isUploadingVideo = false;
+            syncUploadControls();
+            syncSearchControls();
+        }
     }
 });
 
 /**
  * Poll GET /videos/{id} until processing_status is terminal.
  */
-async function pollVideoStatus(id) {
+async function pollVideoStatus(id, currentVideoVersion) {
     const terminalStatuses = ["ready", "completed", "failed"];
     const maxTries = 120;
 
     for (let i = 0; i < maxTries; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
+        if (currentVideoVersion !== videoStateVersion || videoId !== id) {
+            return;
+        }
+        await new Promise((r) => setTimeout(r, 5000));
         try {
             const data = await requestJson(`${API_BASE}/videos/${id}`, { method: "GET" });
+            if (currentVideoVersion !== videoStateVersion || videoId !== id) {
+                return;
+            }
+
             const st = data.status;
+            videoProcessingStatus = st;
             setStatus(videoStatus, `видео (id: ${id}) \u2014 ${statusLabel(st)}`, statusClass(st));
+            syncSearchControls();
             if (terminalStatuses.includes(st)) {
                 return;
             }
@@ -361,19 +440,34 @@ async function pollVideoStatus(id) {
             console.warn("[PollVideo]", err.message);
         }
     }
-    setStatus(videoStatus, `видео (id: ${id}) \u2014 таймаут ожидания`, "status-failed");
+    if (currentVideoVersion === videoStateVersion && videoId === id) {
+        videoProcessingStatus = "failed";
+        setStatus(videoStatus, `видео (id: ${id}) \u2014 таймаут ожидания`, "status-failed");
+        syncSearchControls();
+    }
 }
 
 // ======================== SEARCH ========================
 
 searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (isSearching) {
+        return;
+    }
     if (!userId || !videoId) {
         alert("Нужны пользователь и загруженное видео.");
         return;
     }
+    if (!isVideoReadyForSearch()) {
+        alert("Дождитесь, пока видео закончит обработку.");
+        return;
+    }
     const queryText = promptInput.value.trim();
     if (!queryText) return;
+
+    const currentSearchVersion = ++searchStateVersion;
+    isSearching = true;
+    syncSearchControls();
     setStatus(searchStatus, "отправка...", "status-pending");
     setResults([]);
     try {
@@ -386,24 +480,40 @@ searchForm.addEventListener("submit", async (event) => {
                 query_text: queryText
             })
         });
+        if (currentSearchVersion !== searchStateVersion) return;
+
         const queryId = data.query_id;
         setStatus(searchStatus, `в обработке... (id: ${queryId})`, "status-pending");
-        await pollSearch(queryId);
+        await pollSearch(queryId, currentSearchVersion);
     } catch (err) {
+        if (currentSearchVersion !== searchStateVersion) return;
+
         setStatus(searchStatus, "ошибка", "status-failed");
         alert(`Ошибка поиска: ${err.message}`);
+    } finally {
+        if (currentSearchVersion === searchStateVersion) {
+            isSearching = false;
+            syncSearchControls();
+        }
     }
 });
 
-async function pollSearch(queryId) {
+async function pollSearch(queryId, currentSearchVersion) {
     const maxTries = 120;
     const terminalStatuses = ["ready", "completed", "not_found", "failed"];
 
     for (let i = 0; i < maxTries; i++) {
+        if (currentSearchVersion !== searchStateVersion) {
+            return;
+        }
         try {
             const statusData = await requestJson(`${API_BASE}/searches/${queryId}`, {
                 method: "GET"
             });
+            if (currentSearchVersion !== searchStateVersion) {
+                return;
+            }
+
             const st = statusData.status;
             setStatus(searchStatus, statusLabel(st), statusClass(st));
 
@@ -413,6 +523,10 @@ async function pollSearch(queryId) {
                         const resultsData = await requestJson(`${API_BASE}/searches/${queryId}/results`, {
                             method: "GET"
                         });
+                        if (currentSearchVersion !== searchStateVersion) {
+                            return;
+                        }
+
                         const result = Array.isArray(resultsData.result)
                             ? resultsData.result
                             : Array.isArray(resultsData.results)
@@ -420,6 +534,10 @@ async function pollSearch(queryId) {
                                 : [];
                         setResults(result);
                     } catch (err) {
+                        if (currentSearchVersion !== searchStateVersion) {
+                            return;
+                        }
+
                         setResults([]);
                         setStatus(searchStatus, "ошибка получения результатов", "status-failed");
                     }
@@ -437,5 +555,10 @@ async function pollSearch(queryId) {
 
         await new Promise((resolve) => setTimeout(resolve, 2000));
     }
-    setStatus(searchStatus, "таймаут ожидания", "status-failed");
+    if (currentSearchVersion === searchStateVersion) {
+        setStatus(searchStatus, "таймаут ожидания", "status-failed");
+    }
 }
+
+syncUploadControls();
+syncSearchControls();

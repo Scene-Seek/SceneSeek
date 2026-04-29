@@ -90,6 +90,15 @@ Custom html els
     width: 100%;
 }
 
+.upload-area.is-disabled {
+    opacity: 0.6;
+}
+
+.upload-area.is-disabled label {
+    pointer-events: none;
+    cursor: not-allowed;
+}
+
 /* --- Video player strict containment --- */
 #videoPlayer {
     max-width: 100%;
@@ -229,4 +238,3 @@ li {
     border-bottom: 1px solid var(--border);
     color: var(--text);
 }
-
