@@ -21,6 +21,9 @@ const searchStatus = document.getElementById("search-status");
 const resultsList = document.getElementById("results-list");
 const videoStatus = document.getElementById("video-status");
 const dropArea = document.getElementById("dropArea");
+const videoStage = document.getElementById("video-stage");
+const bboxOverlay = document.getElementById("bboxOverlay");
+const bboxToggle = document.getElementById("bboxToggle");
 const searchSubmitBtn = searchForm.querySelector('button[type="submit"]');
 
 let currentVideoUrl = null;
@@ -32,6 +35,16 @@ let isUploadingVideo = false;
 let isSearching = false;
 let videoStateVersion = 0;
 let searchStateVersion = 0;
+let activeOverlayBBox = null;
+let activeOverlayLabel = "";
+let bboxOverlayEnabled = true;
+
+if (videoStage) {
+    videoStage.hidden = true;
+}
+if (videoPlayer) {
+    videoPlayer.hidden = true;
+}
 
 const SUPPORTED_VIDEO_TYPES = [
     "video/mp4", "video/webm", "video/ogg",
@@ -99,6 +112,8 @@ function resetVideoPreview() {
     videoPlayer.removeAttribute("src");
     videoPlayer.load();
     videoPlayer.hidden = true;
+    if (videoStage) videoStage.hidden = true;
+    resetBboxOverlayState();
     revokeCurrentVideoUrl();
 }
 
@@ -106,6 +121,7 @@ function resetSearchUi() {
     searchStateVersion += 1;
     isSearching = false;
     setStatus(searchStatus, "ожидание", "");
+    resetBboxOverlayState();
     resultsList.innerHTML = "";
     syncSearchControls();
 }
@@ -166,6 +182,117 @@ function normalizeResultItem(item) {
     };
 }
 
+function clearBboxOverlay() {
+    if (!bboxOverlay) return;
+    bboxOverlay.innerHTML = "";
+    bboxOverlay.hidden = true;
+}
+
+function resetBboxOverlayState() {
+    activeOverlayBBox = null;
+    activeOverlayLabel = "";
+    clearBboxOverlay();
+}
+
+function refreshBboxOverlay() {
+    if (!bboxOverlayEnabled) {
+        if (bboxOverlay) {
+            bboxOverlay.innerHTML = "";
+            bboxOverlay.hidden = true;
+        }
+        return;
+    }
+
+    renderBboxOverlay();
+}
+
+function renderBboxOverlay() {
+    if (!bboxOverlayEnabled || !bboxOverlay || !videoPlayer || !activeOverlayBBox || activeOverlayBBox.length !== 4) {
+        return;
+    }
+
+    const [x1, y1, x2, y2] = activeOverlayBBox;
+    const naturalWidth = Number(videoPlayer.videoWidth);
+    const naturalHeight = Number(videoPlayer.videoHeight);
+    const renderedWidth = videoPlayer.clientWidth;
+    const renderedHeight = videoPlayer.clientHeight;
+
+    if (!naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
+        return;
+    }
+
+    const stageRect = videoStage ? videoStage.getBoundingClientRect() : null;
+    const videoRect = videoPlayer.getBoundingClientRect();
+    const displayedRatio = naturalWidth / naturalHeight;
+    const boxRatio = renderedWidth / renderedHeight;
+
+    let contentWidth = renderedWidth;
+    let contentHeight = renderedHeight;
+    let contentOffsetX = 0;
+    let contentOffsetY = 0;
+
+    if (Math.abs(boxRatio - displayedRatio) > 0.001) {
+        if (boxRatio > displayedRatio) {
+            contentHeight = renderedHeight;
+            contentWidth = renderedHeight * displayedRatio;
+            contentOffsetX = (renderedWidth - contentWidth) / 2;
+        } else {
+            contentWidth = renderedWidth;
+            contentHeight = renderedWidth / displayedRatio;
+            contentOffsetY = (renderedHeight - contentHeight) / 2;
+        }
+    }
+
+    const scaleX = contentWidth / naturalWidth;
+    const scaleY = contentHeight / naturalHeight;
+    const left = Math.max(0, Math.min(contentWidth, Number(x1) * scaleX)) + contentOffsetX;
+    const top = Math.max(0, Math.min(contentHeight, Number(y1) * scaleY)) + contentOffsetY;
+    const width = Math.max(0, Math.min(contentWidth - (left - contentOffsetX), (Number(x2) - Number(x1)) * scaleX));
+    const height = Math.max(0, Math.min(contentHeight - (top - contentOffsetY), (Number(y2) - Number(y1)) * scaleY));
+
+    if (stageRect && (videoRect.width === 0 || videoRect.height === 0)) {
+        return;
+    }
+
+    bboxOverlay.innerHTML = "";
+    const rect = document.createElement("div");
+    rect.className = "bbox-rect"
+    rect.style.left = `${left}px`;
+    rect.style.top = `${top}px`;
+    rect.style.width = `${width}px`;
+    rect.style.height = `${height}px`;
+
+    bboxOverlay.appendChild(rect);
+    bboxOverlay.hidden = false;
+}
+
+function showBboxOverlay(bbox, label = "bbox") {
+    if (!Array.isArray(bbox) || bbox.length !== 4) {
+        clearBboxOverlay();
+        return;
+    }
+
+    activeOverlayBBox = bbox.map((value) => Number(value));
+    activeOverlayLabel = label;
+    if (videoPlayer.hidden) {
+        return;
+    }
+    refreshBboxOverlay();
+}
+
+function setActiveResultItem(activeLi) {
+    resultsList.querySelectorAll(".result-item.is-active").forEach((node) => node.classList.remove("is-active"));
+    if (activeLi) {
+        activeLi.classList.add("is-active");
+    }
+}
+
+function updateOverlayForVideoSize() {
+    if (activeOverlayBBox) {
+        refreshBboxOverlay();
+    }
+}
+
 async function seekToTimestamp(seconds) {
     const ts = toNumberOrNull(seconds);
     if (!videoPlayer || ts == null || !videoPlayer.src) return;
@@ -186,7 +313,7 @@ async function seekToTimestamp(seconds) {
 
     const maxTime = Number.isFinite(videoPlayer.duration) ? Math.max(0, videoPlayer.duration - 0.05) : ts;
     videoPlayer.currentTime = Math.min(Math.max(0, ts), maxTime);
-    videoPlayer.play().catch(() => {});
+    videoPlayer.pause();
 }
 
 /**
@@ -211,7 +338,8 @@ function buildResultItem(item) {
     btn.textContent = "\u25B6";
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        seekToTimestamp(seekTime);
+        setActiveResultItem(li);
+        seekToTimestamp(seekTime).then(() => showBboxOverlay(bbox, hitType || "bbox"));
     });
     li.appendChild(btn);
 
@@ -230,17 +358,6 @@ function buildResultItem(item) {
 
     const parts = [];
     if (score != null) parts.push(`score: ${score.toFixed(3)}`);
-    if (hitType === "local") {
-        parts.push("type: local object");
-    } else if (hitType === "global") {
-        parts.push("type: global context");
-    }
-    if (Array.isArray(bbox) && bbox.length === 4) {
-        const [x1, y1, x2, y2] = bbox.map((v) => Number(v));
-        if ([x1, y1, x2, y2].every((v) => !Number.isNaN(v))) {
-            parts.push(`bbox: [${x1.toFixed(0)}, ${y1.toFixed(0)}, ${x2.toFixed(0)}, ${y2.toFixed(0)}]`);
-        }
-    }
     if (parts.length) {
         const metaLine = document.createElement("div");
         metaLine.className = "result-meta";
@@ -251,12 +368,16 @@ function buildResultItem(item) {
     li.appendChild(textDiv);
 
     li.style.cursor = "pointer";
-    li.addEventListener("click", () => seekToTimestamp(seekTime));
+    li.addEventListener("click", () => {
+        setActiveResultItem(li);
+        seekToTimestamp(seekTime).then(() => showBboxOverlay(bbox, hitType || "bbox"));
+    });
 
     return li;
 }
 
 function setResults(items) {
+    clearBboxOverlay();
     resultsList.innerHTML = "";
     if (!items || items.length === 0) {
         const li = document.createElement("li");
@@ -291,6 +412,27 @@ videoPlayer.addEventListener("error", () => {
         console.warn("[VideoPlayer]", msg, err.message);
     }
 });
+
+videoPlayer.addEventListener("play", clearBboxOverlay);
+videoPlayer.addEventListener("pause", updateOverlayForVideoSize);
+videoPlayer.addEventListener("seeked", updateOverlayForVideoSize);
+videoPlayer.addEventListener("loadedmetadata", updateOverlayForVideoSize);
+window.addEventListener("resize", updateOverlayForVideoSize);
+
+if (bboxToggle) {
+    bboxOverlayEnabled = bboxToggle.checked;
+    bboxToggle.addEventListener("change", () => {
+        bboxOverlayEnabled = bboxToggle.checked;
+        if (bboxOverlayEnabled) {
+            refreshBboxOverlay();
+        } else {
+            if (bboxOverlay) {
+                bboxOverlay.innerHTML = "";
+                bboxOverlay.hidden = true;
+            }
+        }
+    });
+}
 
 async function requestJson(url, options) {
     const response = await fetch(url, options);
@@ -342,6 +484,7 @@ fileInput.addEventListener("change", (event) => {
         revokeCurrentVideoUrl();
         currentVideoUrl = URL.createObjectURL(file);
         videoPlayer.src = currentVideoUrl;
+        if (videoStage) videoStage.hidden = false;
         videoPlayer.hidden = false;
         videoPlayer.load();
         resetSearchUi();

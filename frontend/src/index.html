@@ -39,8 +39,11 @@
                     </label>
                 </div>
                 <div class="video-preview-area">
-                    <video id="videoPlayer" hidden controls></video>
-                    <button id="removeBtn" hidden type="button">Удалить видео</button>
+                    <div class="video-stage" id="video-stage" hidden>
+                        <video id="videoPlayer" hidden controls></video>
+                        <div class="bbox-overlay" id="bboxOverlay" hidden aria-hidden="true"></div>
+                    </div>
+                    <button id="removeBtn" hidden type="button">Закрыть видео</button>
                 </div>
             </div>
             <div class="actions">
@@ -65,6 +68,10 @@
                 <span>Статус поиска:</span>
                 <strong id="search-status">ожидание</strong>
             </div>
+            <label class="bbox-toggle">
+                <input type="checkbox" id="bboxToggle" checked>
+                <span>Показывать bbox</span>
+            </label>
             <div class="results-area">
                 <h3>Результаты</h3>
                 <ul id="results-list"></ul>

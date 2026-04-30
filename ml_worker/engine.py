@@ -35,7 +35,7 @@ class IndexerConfig:
     siglip_model_id: str = "google/siglip2-base-patch16-224"
     db_dsn: str = "postgresql://postgres:password@localhost:5432/sceneseek_test"
     merge_threshold_sec: float = 2.0
-    min_hits_in_segment: int = 2
+    min_hits_in_segment: int = 4
     raw_search_limit: int = 5000
     sql_min_similarity: float = 0.05
 
@@ -54,17 +54,17 @@ class IndexerConfig:
         )
 
 
-class VideoSearchEngine:
-    def __init__(self, config: Optional[IndexerConfig] = None) -> None:
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.config = config if config else IndexerConfig()
-        self.pool: Optional[asyncpg.Pool] = None
-        self.executor = ThreadPoolExecutor(max_workers=2)
+class ModelRuntime:
+    """Owns model lifecycle and embedding/cropping helpers."""
 
-        logger.info("Starting video search engine on device=%s", self.device)
-        self._load_models()
+    def __init__(self, config: IndexerConfig, device: str) -> None:
+        self.config = config
+        self.device = device
+        self.detector: YOLO
+        self.siglip_model: SiglipModel
+        self.siglip_processor: SiglipProcessor
 
-    def _load_models(self) -> None:
+    def load_models(self) -> None:
         total_started = perf_counter()
 
         yolo_started = perf_counter()
@@ -78,6 +78,189 @@ class VideoSearchEngine:
         self.siglip_processor = SiglipProcessor.from_pretrained(self.config.siglip_model_id)
         logger.info("SigLIP model loaded in %.2fs", perf_counter() - siglip_started)
         logger.info("Engine initialization complete in %.2fs", perf_counter() - total_started)
+
+    def append_frame_views(
+        self,
+        frame: np.ndarray,
+        ts: float,
+        img_buffer: List[Image.Image],
+        meta_buffer: List[Dict[str, Any]],
+    ) -> None:
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb_frame)
+
+        img_buffer.append(pil_img.resize((224, 224)))
+        meta_buffer.append(
+            {
+                "ts": ts,
+                "bbox": [0, 0, frame.shape[1], frame.shape[0]],
+                "type": "global",
+            }
+        )
+
+        results = self.detector(frame, verbose=False, conf=self.config.yolo_conf)[0]
+        for box in results.boxes.xyxy:
+            coords = box.tolist()
+            crop = self.get_padding_crop(pil_img, coords)
+            img_buffer.append(crop.resize((224, 224)))
+            meta_buffer.append({"ts": ts, "bbox": coords, "type": "local"})
+
+    def get_padding_crop(self, pil_img: Image.Image, box: List[float], padding: float = 0.25) -> Image.Image:
+        w, h = pil_img.size
+        x1, y1, x2, y2 = box
+        bw, bh = x2 - x1, y2 - y1
+        return pil_img.crop((max(0, x1 - bw * padding), max(0, y1 - bh * padding), min(w, x2 + bw * padding), min(h, y2 + bh * padding)))
+
+    def _extract_tensor(self, outputs: Any) -> torch.Tensor:
+        if hasattr(outputs, "pooler_output"):
+            return outputs.pooler_output
+        if isinstance(outputs, (list, tuple)):
+            return outputs[0]
+        return outputs
+
+    @torch.inference_mode()
+    def vectorize_images_sync(self, images: List[Image.Image]) -> np.ndarray:
+        if not images:
+            return np.array([])
+        inputs = self.siglip_processor(images=images, return_tensors="pt").to(self.device)
+        with torch.inference_mode():
+            outputs = self.siglip_model.get_image_features(**inputs)
+            features = self._extract_tensor(outputs)
+            features = F.normalize(features, p=2, dim=-1)
+        return features.cpu().numpy()
+
+    @torch.inference_mode()
+    def vectorize_text_sync(self, query: str) -> np.ndarray:
+        full_query = f"a photo of {query}"
+        inputs = self.siglip_processor(text=[full_query], return_tensors="pt", padding="max_length").to(self.device)
+        outputs = self.siglip_model.get_text_features(**inputs)
+        text_vec = self._extract_tensor(outputs)
+        text_vec = F.normalize(text_vec, p=2, dim=-1)
+        return text_vec.cpu().numpy()[0]
+
+
+class SearchPostProcessor:
+    """Pure search scoring and segmentation routines."""
+
+    def build_scored_hits(self, rows: List[asyncpg.Record], min_score: float) -> List[Dict[str, Any]]:
+        parsed_rows: List[Dict[str, Any]] = []
+        scores: List[float] = []
+        for row in rows:
+            meta = row["yolo_metadata"]
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+
+            score = float(row["score"])
+            scores.append(score)
+
+            parsed_rows.append(
+                {
+                    "event_id": int(row["event_id"]),
+                    "video_id": int(row["video_id"]),
+                    "video_title": row["title"],
+                    "ts": float(row["timestamp"]),
+                    "score": score,
+                    "bbox": meta.get("bbox", []),
+                    "type": meta.get("type", "unknown"),
+                }
+            )
+
+        if not parsed_rows:
+            return []
+
+        scores_np = np.asarray(scores, dtype=np.float32)
+        mean_score = float(np.mean(scores_np))
+        std_score = float(np.std(scores_np))
+
+        # dynamic_threshold = max(0.05, mean_score + float(min_score) * std_score)
+        # keep_count = max(1, min(len(parsed_rows), max(8, int(np.ceil(len(parsed_rows) * 0.2)))))
+        # sorted_scores = np.sort(scores_np)
+        # keep_floor = float(sorted_scores[-keep_count])
+        # threshold = min(dynamic_threshold, keep_floor)
+
+        base_threshold = mean_score + 0.5 * std_score
+        keep_count = max(1, min(len(parsed_rows), max(8, int(np.ceil(len(parsed_rows) * 0.2)))))
+        sorted_scores = np.sort(scores_np)
+        keep_floor = float(sorted_scores[-keep_count])
+        threshold = max(base_threshold, keep_floor * 0.8)
+
+        logger.info(
+            "Search score stats: candidates=%s mean=%.4f std=%.4f max=%.4f threshold=%.4f keep_floor=%.4f keep_count=%s",
+            len(parsed_rows),
+            mean_score,
+            std_score,
+            float(np.max(scores_np)),
+            threshold,
+            keep_floor,
+            keep_count,
+        )
+
+        frame_best_hits: Dict[Tuple[int, float], Dict[str, Any]] = {}
+        for hit in parsed_rows:
+            if hit["score"] < threshold:
+                continue
+            key = (hit["video_id"], round(hit["ts"], 6))
+            if key not in frame_best_hits or hit["score"] > frame_best_hits[key]["score"]:
+                frame_best_hits[key] = hit.copy()
+
+        hits = list(frame_best_hits.values())
+        hits.sort(key=lambda item: (item["video_id"], item["ts"]))
+        logger.info("Search hits retained after thresholding: kept=%s dropped=%s", len(hits), len(parsed_rows) - len(hits))
+        return hits
+
+    def cluster_hits(self, raw_hits: List[Dict[str, Any]], merge_threshold_sec: float) -> List[List[Dict[str, Any]]]:
+        per_video_hits: Dict[int, List[Dict[str, Any]]] = {}
+        for hit in raw_hits:
+            per_video_hits.setdefault(hit["video_id"], []).append(hit)
+
+        segments: List[List[Dict[str, Any]]] = []
+        for hits in per_video_hits.values():
+            current_segment = [hits[0]]
+            for hit in hits[1:]:
+                if hit["ts"] - current_segment[-1]["ts"] <= merge_threshold_sec:
+                    current_segment.append(hit)
+                else:
+                    segments.append(current_segment)
+                    current_segment = [hit]
+            segments.append(current_segment)
+        return segments
+
+    def build_segment_results(self, segments: List[List[Dict[str, Any]]], min_segment_hits: int) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for segment in segments:
+            if len(segment) < min_segment_hits:
+                continue
+            best_hit = max(segment, key=lambda item: item["score"])
+            results.append(
+                {
+                    "event_id": best_hit["event_id"],
+                    "video_id": best_hit["video_id"],
+                    "video_title": best_hit["video_title"],
+                    "start": round(segment[0]["ts"], 2),
+                    "end": round(segment[-1]["ts"], 2),
+                    "best_ts": round(best_hit["ts"], 2),
+                    "score": round(best_hit["score"], 4),
+                    "bbox": best_hit["bbox"],
+                    "type": best_hit["type"],
+                }
+            )
+        return results
+
+
+class VideoSearchEngine:
+    def __init__(self, config: Optional[IndexerConfig] = None) -> None:
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.config = config if config else IndexerConfig()
+        self.pool: Optional[asyncpg.Pool] = None
+        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.runtime = ModelRuntime(config=self.config, device=self.device)
+        self.search_post_processor = SearchPostProcessor()
+
+        logger.info("Starting video search engine on device=%s", self.device)
+        self._load_models()
+
+    def _load_models(self) -> None:
+        self.runtime.load_models()
 
     async def close(self) -> None:
         if self.pool:
@@ -200,30 +383,10 @@ class VideoSearchEngine:
         img_buffer: List[Image.Image],
         meta_buffer: List[Dict[str, Any]],
     ) -> None:
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(rgb_frame)
-
-        img_buffer.append(pil_img.resize((224, 224)))
-        meta_buffer.append(
-            {
-                "ts": ts,
-                "bbox": [0, 0, frame.shape[1], frame.shape[0]],
-                "type": "global",
-            }
-        )
-
-        results = self.detector(frame, verbose=False, conf=self.config.yolo_conf)[0]
-        for box in results.boxes.xyxy:
-            coords = box.tolist()
-            crop = self._get_padding_crop(pil_img, coords)
-            img_buffer.append(crop.resize((224, 224)))
-            meta_buffer.append({"ts": ts, "bbox": coords, "type": "local"})
+        self.runtime.append_frame_views(frame, ts, img_buffer, meta_buffer)
 
     def _get_padding_crop(self, pil_img: Image.Image, box: List[float], padding: float = 0.25) -> Image.Image:
-        w, h = pil_img.size
-        x1, y1, x2, y2 = box
-        bw, bh = x2 - x1, y2 - y1
-        return pil_img.crop((max(0, x1 - bw * padding), max(0, y1 - bh * padding), min(w, x2 + bw * padding), min(h, y2 + bh * padding)))
+        return self.runtime.get_padding_crop(pil_img, box, padding)
 
     async def _process_and_save_batch(self, video_id: int, images: List[Image.Image], metas: List[Dict[str, Any]]) -> None:
         loop = asyncio.get_running_loop()
@@ -243,31 +406,15 @@ class VideoSearchEngine:
         logger.info("Saved embedding batch: video_id=%s batch_size=%s", video_id, len(batch_data))
 
     def _extract_tensor(self, outputs: Any) -> torch.Tensor:
-        if hasattr(outputs, "pooler_output"):
-            return outputs.pooler_output
-        if isinstance(outputs, (list, tuple)):
-            return outputs[0]
-        return outputs
+        return self.runtime._extract_tensor(outputs)
 
     @torch.inference_mode()
     def _vectorize_images_sync(self, images: List[Image.Image]) -> np.ndarray:
-        if not images:
-            return np.array([])
-        inputs = self.siglip_processor(images=images, return_tensors="pt").to(self.device)
-        with torch.inference_mode():
-            outputs = self.siglip_model.get_image_features(**inputs)
-            features = self._extract_tensor(outputs)
-            features = F.normalize(features, p=2, dim=-1)
-        return features.cpu().numpy()
+        return self.runtime.vectorize_images_sync(images)
 
     @torch.inference_mode()
     def _vectorize_text_sync(self, query: str) -> np.ndarray:
-        full_query = f"a photo of {query}"
-        inputs = self.siglip_processor(text=[full_query], return_tensors="pt", padding="max_length").to(self.device)
-        outputs = self.siglip_model.get_text_features(**inputs)
-        text_vec = self._extract_tensor(outputs)
-        text_vec = F.normalize(text_vec, p=2, dim=-1)
-        return text_vec.cpu().numpy()[0]
+        return self.runtime.vectorize_text_sync(query)
 
     # ====================== SEARCH LOGIC ======================
 
@@ -366,101 +513,13 @@ class VideoSearchEngine:
             return await conn.fetch(sql, query_vec.tolist(), video_id, float(min_similarity), int(raw_limit))
 
     def _build_scored_hits(self, rows: List[asyncpg.Record], min_score: float) -> List[Dict[str, Any]]:
-        parsed_rows: List[Dict[str, Any]] = []
-        scores: List[float] = []
-        for row in rows:
-            meta = row["yolo_metadata"]
-            if isinstance(meta, str):
-                meta = json.loads(meta)
-
-            score = float(row["score"])
-            scores.append(score)
-
-            parsed_rows.append(
-                {
-                    "event_id": int(row["event_id"]),
-                    "video_id": int(row["video_id"]),
-                    "video_title": row["title"],
-                    "ts": float(row["timestamp"]),
-                    "score": score,
-                    "bbox": meta.get("bbox", []),
-                    "type": meta.get("type", "unknown"),
-                }
-            )
-
-        if not parsed_rows:
-            return []
-
-        scores_np = np.asarray(scores, dtype=np.float32)
-        mean_score = float(np.mean(scores_np))
-        std_score = float(np.std(scores_np))
-        dynamic_threshold = max(0.05, mean_score + float(min_score) * std_score)
-        keep_count = max(1, min(len(parsed_rows), max(8, int(np.ceil(len(parsed_rows) * 0.2)))))
-        sorted_scores = np.sort(scores_np)
-        keep_floor = float(sorted_scores[-keep_count])
-        dynamic_threshold = min(dynamic_threshold, keep_floor)
-
-        logger.info(
-            "Search score stats: candidates=%s mean=%.4f std=%.4f max=%.4f threshold=%.4f keep_floor=%.4f keep_count=%s",
-            len(parsed_rows),
-            mean_score,
-            std_score,
-            float(np.max(scores_np)),
-            dynamic_threshold,
-            keep_floor,
-            keep_count,
-        )
-
-        frame_best_hits: Dict[Tuple[int, float], Dict[str, Any]] = {}
-        for hit in parsed_rows:
-            if hit["score"] < dynamic_threshold:
-                continue
-            key = (hit["video_id"], round(hit["ts"], 6))
-            if key not in frame_best_hits or hit["score"] > frame_best_hits[key]["score"]:
-                frame_best_hits[key] = hit.copy()
-
-        hits = list(frame_best_hits.values())
-        hits.sort(key=lambda item: (item["video_id"], item["ts"]))
-        logger.info("Search hits retained after thresholding: kept=%s dropped=%s", len(hits), len(parsed_rows) - len(hits))
-        return hits
+        return self.search_post_processor.build_scored_hits(rows, min_score)
 
     def _cluster_hits(self, raw_hits: List[Dict[str, Any]], merge_threshold_sec: float) -> List[List[Dict[str, Any]]]:
-        per_video_hits: Dict[int, List[Dict[str, Any]]] = {}
-        for hit in raw_hits:
-            per_video_hits.setdefault(hit["video_id"], []).append(hit)
-
-        segments: List[List[Dict[str, Any]]] = []
-        for hits in per_video_hits.values():
-            current_segment = [hits[0]]
-            for hit in hits[1:]:
-                if hit["ts"] - current_segment[-1]["ts"] <= merge_threshold_sec:
-                    current_segment.append(hit)
-                else:
-                    segments.append(current_segment)
-                    current_segment = [hit]
-            segments.append(current_segment)
-        return segments
+        return self.search_post_processor.cluster_hits(raw_hits, merge_threshold_sec)
 
     def _build_segment_results(self, segments: List[List[Dict[str, Any]]], min_segment_hits: int) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
-        for segment in segments:
-            if len(segment) < min_segment_hits:
-                continue
-            best_hit = max(segment, key=lambda item: item["score"])
-            results.append(
-                {
-                    "event_id": best_hit["event_id"],
-                    "video_id": best_hit["video_id"],
-                    "video_title": best_hit["video_title"],
-                    "start": round(segment[0]["ts"], 2),
-                    "end": round(segment[-1]["ts"], 2),
-                    "best_ts": round(best_hit["ts"], 2),
-                    "score": round(best_hit["score"], 4),
-                    "bbox": best_hit["bbox"],
-                    "type": best_hit["type"],
-                }
-            )
-        return results
+        return self.search_post_processor.build_segment_results(segments, min_segment_hits)
 
     async def update_search_status(self, query_id: int, query_text: str, status: str = "ready") -> None:
         await self._initialize_db()
