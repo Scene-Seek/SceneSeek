@@ -48,7 +48,7 @@ if (videoPlayer) {
 
 const SUPPORTED_VIDEO_TYPES = [
     "video/mp4", "video/webm", "video/ogg",
-    "video/quicktime",
+    "video/quicktime", "video/x-m4v", "application/mp4"
 ];
 
 const STATUS_LABELS = {
@@ -59,6 +59,58 @@ const STATUS_LABELS = {
     not_found: "Ничего не найдено",
     failed: "Ошибка",
 };
+
+function saveAppState() {
+    const state = {
+        nickname: nicknameInput.value,
+        userId: userId,
+        videoId: videoId,
+        videoProcessingStatus: videoProcessingStatus,
+        prompt: promptInput.value
+    };
+    localStorage.setItem("app_state", JSON.stringify(state));
+}
+
+function loadAppState() {
+    const saved = localStorage.getItem('app_state');
+    if (!saved) return;
+
+    const state = JSON.parse(saved);
+
+    if (state.nickname) {
+        nicknameInput.value = state.nickname;
+        if (state.userId) {
+            userId = state.userId;
+            setStatus(userStatus, `${state.nickname} (id: ${userId})`, "status-ready");
+        }
+    }
+
+    if (state.prompt) {
+        promptInput.value = state.prompt;
+    }
+
+    if (state.videoId) {
+        videoId = state.videoId;
+        videoProcessingStatus = state.videoProcessingStatus;
+        const serverVideoUrl = `${API_BASE}/videos/${videoId}/content`;
+        
+        videoPlayer.src = serverVideoUrl; 
+        videoPlayer.hidden = false;
+        if (videoStage) videoStage.hidden = false;
+        videoPlayer.load();
+        setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
+        
+        if (videoProcessingStatus !== 'ready' && videoProcessingStatus !== 'completed') {
+            void pollVideoStatus(videoId, videoStateVersion);
+        }
+    }
+    
+    syncSearchControls();
+    syncUploadControls();
+}
+
+nicknameInput.addEventListener('input', saveAppState);
+promptInput.addEventListener('input', saveAppState);
 
 function statusLabel(raw) {
     return STATUS_LABELS[raw] || raw;
@@ -457,6 +509,7 @@ identifyForm.addEventListener("submit", async (event) => {
             body: JSON.stringify({ nickname })
         });
         userId = data.user_id;
+        saveAppState();
         setStatus(userStatus, `${data.nickname} (id: ${userId})`, "status-ready");
         syncSearchControls();
     } catch (err) {
@@ -489,6 +542,7 @@ fileInput.addEventListener("change", (event) => {
         videoPlayer.load();
         resetSearchUi();
         syncUploadControls();
+        saveAppState();
     }
 });
 
@@ -503,6 +557,7 @@ removeBtn.addEventListener("click", () => {
     resetSearchUi();
     syncUploadControls();
     syncSearchControls();
+    saveAppState();
 });
 
 uploadBtn.addEventListener("click", async () => {
@@ -539,6 +594,7 @@ uploadBtn.addEventListener("click", async () => {
         videoProcessingStatus = data.status;
         setStatus(videoStatus, `загружено (id: ${videoId}) \u2014 ${statusLabel(data.status)}`, statusClass(data.status));
         void pollVideoStatus(videoId, currentVideoVersion);
+        saveAppState();
     } catch (err) {
         if (currentVideoVersion !== videoStateVersion) return;
 
@@ -574,6 +630,7 @@ async function pollVideoStatus(id, currentVideoVersion) {
 
             const st = data.status;
             videoProcessingStatus = st;
+            saveAppState();
             setStatus(videoStatus, `видео (id: ${id}) \u2014 ${statusLabel(st)}`, statusClass(st));
             syncSearchControls();
             if (terminalStatuses.includes(st)) {
@@ -623,6 +680,7 @@ searchForm.addEventListener("submit", async (event) => {
                 query_text: queryText
             })
         });
+        saveAppState();
         if (currentSearchVersion !== searchStateVersion) return;
 
         const queryId = data.query_id;
@@ -703,5 +761,6 @@ async function pollSearch(queryId, currentSearchVersion) {
     }
 }
 
+window.addEventListener('load', loadAppState);
 syncUploadControls();
 syncSearchControls();

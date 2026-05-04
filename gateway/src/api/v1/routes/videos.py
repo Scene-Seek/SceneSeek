@@ -2,6 +2,7 @@ import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi.responses import RedirectResponse
 from src.api.v1.schemas.video import GetVideoResponseScheme, UploadVideoResponseScheme
 from src.services.broker_service import broker_service
 from src.services.database_service import database_service
@@ -76,4 +77,29 @@ async def get_videos(video_id: int):
         raise
     except Exception:
         logger.exception("Unexpected error while getting video")
+        raise HTTPException(status_code=500, detail="internal server error")
+
+@router.get("/videos/{video_id}/content")
+async def get_video_content(video_id: int):
+    try:
+        video = await database_service.get_video_by_id(video_id=video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="video not found")
+
+        parts = video.path.split("/", 1)
+        if len(parts) == 2:
+            bucket, obj_name = parts
+            video_url = minio_service.get_presigned_url(
+                bucket=bucket,
+                object_name=obj_name,
+                expires_seconds=3600
+            )
+            return RedirectResponse(url=video_url)
+        else:
+            return RedirectResponse(url=video.path)
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(f"Error redirecting to video content: {video_id}")
         raise HTTPException(status_code=500, detail="internal server error")
