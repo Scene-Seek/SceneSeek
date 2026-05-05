@@ -55,7 +55,7 @@ class IndexerConfig:
 
 
 class ModelRuntime:
-    """Owns model lifecycle and embedding/cropping helpers."""
+    """Model lifecycle and embedding/cropping helpers."""
 
     def __init__(self, config: IndexerConfig, device: str) -> None:
         self.config = config
@@ -142,7 +142,7 @@ class ModelRuntime:
 class SearchPostProcessor:
     """Pure search scoring and segmentation routines."""
 
-    def build_scored_hits(self, rows: List[asyncpg.Record], min_score: float) -> List[Dict[str, Any]]:
+    def build_scored_hits(self, rows: List[asyncpg.Record]) -> List[Dict[str, Any]]:
         parsed_rows: List[Dict[str, Any]] = []
         scores: List[float] = []
         for row in rows:
@@ -171,12 +171,6 @@ class SearchPostProcessor:
         scores_np = np.asarray(scores, dtype=np.float32)
         mean_score = float(np.mean(scores_np))
         std_score = float(np.std(scores_np))
-
-        # dynamic_threshold = max(0.05, mean_score + float(min_score) * std_score)
-        # keep_count = max(1, min(len(parsed_rows), max(8, int(np.ceil(len(parsed_rows) * 0.2)))))
-        # sorted_scores = np.sort(scores_np)
-        # keep_floor = float(sorted_scores[-keep_count])
-        # threshold = min(dynamic_threshold, keep_floor)
 
         base_threshold = mean_score + 0.5 * std_score
         keep_count = max(1, min(len(parsed_rows), max(8, int(np.ceil(len(parsed_rows) * 0.2)))))
@@ -425,7 +419,6 @@ class VideoSearchEngine:
         query_id: Optional[int] = None,
         video_id: Optional[int] = None,
         top_k: int = 5,
-        min_score: float = 2.0,
         merge_threshold: Optional[float] = None,
         min_hits_in_segment: Optional[int] = None,
         raw_limit: Optional[int] = None,
@@ -459,7 +452,7 @@ class VideoSearchEngine:
             logger.info("Search finished with no source rows: query_id=%s duration_sec=%.2f", query_id, perf_counter() - started)
             return []
 
-        raw_hits = self._build_scored_hits(rows, min_score)
+        raw_hits = self._build_scored_hits(rows)
         if not raw_hits:
             logger.info("Search finished with no hits above threshold: query_id=%s duration_sec=%.2f", query_id, perf_counter() - started)
             return []
@@ -512,8 +505,8 @@ class VideoSearchEngine:
         async with self.pool.acquire() as conn:
             return await conn.fetch(sql, query_vec.tolist(), video_id, float(min_similarity), int(raw_limit))
 
-    def _build_scored_hits(self, rows: List[asyncpg.Record], min_score: float) -> List[Dict[str, Any]]:
-        return self.search_post_processor.build_scored_hits(rows, min_score)
+    def _build_scored_hits(self, rows: List[asyncpg.Record]) -> List[Dict[str, Any]]:
+        return self.search_post_processor.build_scored_hits(rows)
 
     def _cluster_hits(self, raw_hits: List[Dict[str, Any]], merge_threshold_sec: float) -> List[List[Dict[str, Any]]]:
         return self.search_post_processor.cluster_hits(raw_hits, merge_threshold_sec)

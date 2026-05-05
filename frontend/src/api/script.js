@@ -465,6 +465,12 @@ videoPlayer.addEventListener("error", () => {
     }
 });
 
+videoPlayer.addEventListener("loadedmetadata", () => {
+    if (selectedFile && !isUploadingVideo && videoId === null) {
+        setStatus(videoStatus, "готово к загрузке", "");
+    }
+});
+
 videoPlayer.addEventListener("play", clearBboxOverlay);
 videoPlayer.addEventListener("pause", updateOverlayForVideoSize);
 videoPlayer.addEventListener("seeked", updateOverlayForVideoSize);
