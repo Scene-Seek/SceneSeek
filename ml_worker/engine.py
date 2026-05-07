@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ import torch
 import torch.nn.functional as F
 from pgvector.asyncpg import register_vector
 from PIL import Image
+from stop_words import get_stop_words
 from transformers import SiglipModel, SiglipProcessor
 from ultralytics import YOLO
 
@@ -63,6 +65,7 @@ class ModelRuntime:
         self.detector: YOLO
         self.siglip_model: SiglipModel
         self.siglip_processor: SiglipProcessor
+        self.stopwords = self._build_stopwords()
 
     def load_models(self) -> None:
         total_started = perf_counter()
@@ -90,13 +93,11 @@ class ModelRuntime:
         pil_img = Image.fromarray(rgb_frame)
 
         img_buffer.append(pil_img.resize((224, 224)))
-        meta_buffer.append(
-            {
-                "ts": ts,
-                "bbox": [0, 0, frame.shape[1], frame.shape[0]],
-                "type": "global",
-            }
-        )
+        meta_buffer.append({
+            "ts": ts,
+            "bbox": [0, 0, frame.shape[1], frame.shape[0]],
+            "type": "global",
+        })
 
         results = self.detector(frame, verbose=False, conf=self.config.yolo_conf)[0]
         for box in results.boxes.xyxy:
@@ -118,6 +119,18 @@ class ModelRuntime:
             return outputs[0]
         return outputs
 
+    def _build_stopwords(self) -> set[str]:
+        return set(get_stop_words("en")) | set(get_stop_words("ru"))
+
+    def normalize_query(self, query: str) -> str:
+        text = query.strip().lower()
+        if not text:
+            return ""
+        text = re.sub(r"[^\w\s]+", " ", text, flags=re.UNICODE)
+        text = re.sub(r"[\s_]+", " ", text).strip()
+        tokens = [token for token in text.split() if token not in self.stopwords]
+        return " ".join(tokens) if tokens else text
+
     @torch.inference_mode()
     def vectorize_images_sync(self, images: List[Image.Image]) -> np.ndarray:
         if not images:
@@ -131,7 +144,9 @@ class ModelRuntime:
 
     @torch.inference_mode()
     def vectorize_text_sync(self, query: str) -> np.ndarray:
-        full_query = f"a photo of {query}"
+        normalized = self.normalize_query(query)
+        prompt_query = normalized if normalized else query.strip().lower()
+        full_query = f"a photo of {prompt_query}"
         inputs = self.siglip_processor(text=[full_query], return_tensors="pt", padding="max_length").to(self.device)
         outputs = self.siglip_model.get_text_features(**inputs)
         text_vec = self._extract_tensor(outputs)
@@ -153,17 +168,15 @@ class SearchPostProcessor:
             score = float(row["score"])
             scores.append(score)
 
-            parsed_rows.append(
-                {
-                    "event_id": int(row["event_id"]),
-                    "video_id": int(row["video_id"]),
-                    "video_title": row["title"],
-                    "ts": float(row["timestamp"]),
-                    "score": score,
-                    "bbox": meta.get("bbox", []),
-                    "type": meta.get("type", "unknown"),
-                }
-            )
+            parsed_rows.append({
+                "event_id": int(row["event_id"]),
+                "video_id": int(row["video_id"]),
+                "video_title": row["title"],
+                "ts": float(row["timestamp"]),
+                "score": score,
+                "bbox": meta.get("bbox", []),
+                "type": meta.get("type", "unknown"),
+            })
 
         if not parsed_rows:
             return []
@@ -225,19 +238,17 @@ class SearchPostProcessor:
             if len(segment) < min_segment_hits:
                 continue
             best_hit = max(segment, key=lambda item: item["score"])
-            results.append(
-                {
-                    "event_id": best_hit["event_id"],
-                    "video_id": best_hit["video_id"],
-                    "video_title": best_hit["video_title"],
-                    "start": round(segment[0]["ts"], 2),
-                    "end": round(segment[-1]["ts"], 2),
-                    "best_ts": round(best_hit["ts"], 2),
-                    "score": round(best_hit["score"], 4),
-                    "bbox": best_hit["bbox"],
-                    "type": best_hit["type"],
-                }
-            )
+            results.append({
+                "event_id": best_hit["event_id"],
+                "video_id": best_hit["video_id"],
+                "video_title": best_hit["video_title"],
+                "start": round(segment[0]["ts"], 2),
+                "end": round(segment[-1]["ts"], 2),
+                "best_ts": round(best_hit["ts"], 2),
+                "score": round(best_hit["score"], 4),
+                "bbox": best_hit["bbox"],
+                "type": best_hit["type"],
+            })
         return results
 
 

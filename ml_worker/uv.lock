@@ -799,6 +799,7 @@ dependencies = [
     { name = "pgvector" },
     { name = "pydantic-settings" },
     { name = "sentencepiece" },
+    { name = "stop-words" },
     { name = "transformers" },
     { name = "ultralytics" },
 ]
@@ -813,6 +814,7 @@ requires-dist = [
     { name = "pgvector", specifier = "==0.4.2" },
     { name = "pydantic-settings", specifier = "==2.12.0" },
     { name = "sentencepiece", specifier = "==0.2.1" },
+    { name = "stop-words", specifier = ">=2018.7.23" },
     { name = "transformers", specifier = "==5.5.3" },
     { name = "ultralytics", specifier = "==8.4.37" },
 ]
@@ -1860,6 +1862,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
+
+[[package]]
+name = "stop-words"
+version = "2018.7.23"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/cb/d58290804b7a4c5daa42abbbe2a93c477ae53e45541b1825e86f0dfaaf63/stop-words-2018.7.23.tar.gz", hash = "sha256:6df3ad5f5de697daa437e4445c86c73604e6bc138dd0dc0fac55664aa4e6b03e", size = 31494, upload-time = "2018-07-23T20:55:55.275Z" }
 
 [[package]]
 name = "sympy"
