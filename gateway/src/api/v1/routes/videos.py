@@ -1,8 +1,9 @@
 import logging
 from uuid import uuid4
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
+from src.api.dependencies import get_current_user_id
 from src.api.v1.schemas.video import GetVideoResponseScheme, UploadVideoResponseScheme
 from src.services.broker_service import broker_service
 from src.services.database_service import database_service
@@ -13,19 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/videos", response_model=UploadVideoResponseScheme)
-async def post_videos(file: UploadFile, user_id: int = Form(...)):
+async def post_videos(file: UploadFile, current_user_id: int = Depends(get_current_user_id)):
     """
     Создать новое видео
     """
 
     try:
         # Если нет пользователя, то исключение
-        user = await database_service.get_user_by_id(user_id=user_id)
+        user = await database_service.get_user_by_id(user_id=current_user_id)
         if not user:
             raise HTTPException(status_code=404, detail="user not found")
         # Generate unique object name to avoid collisions
         original_name = file.filename or "video.mp4"
-        object_name = f"{user_id}/{uuid4()}_{original_name}"
+        object_name = f"{current_user_id}/{uuid4()}_{original_name}"
         # minio - store with unique name
         minio_service.save_obj(
             obj=file,
@@ -35,12 +36,12 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
         # Store object key in DB (not presigned URL)
         object_key = f"{minio_service.BUCKET_VIDEOS_IN}/{object_name}"
         # db
-        video = await database_service.create_video(uploaded_by_user_id=user_id, title=original_name, path=object_key, duration=None, fps=None, resolution=None, processing_status="pending")
+        video = await database_service.create_video(uploaded_by_user_id=current_user_id, title=original_name, path=object_key, duration=None, fps=None, resolution=None, processing_status="pending")
         # Generate fresh presigned URL for ML worker
         video_url = minio_service.get_video_url_internal(object_name=object_name)
         # broker
         await broker_service.pub(
-            message={"video_id": video.video_id, "user_id": user_id, "object_name": object_name, "bucket": minio_service.BUCKET_VIDEOS_IN, "video_url": video_url}, queue=broker_service.QUEUE_VIDEOS
+            message={"video_id": video.video_id, "user_id": current_user_id, "object_name": object_name, "bucket": minio_service.BUCKET_VIDEOS_IN, "video_url": video_url}, queue=broker_service.QUEUE_VIDEOS
         )
         return UploadVideoResponseScheme(video_id=video.video_id, status=video.processing_status)
     except HTTPException:
@@ -51,7 +52,7 @@ async def post_videos(file: UploadFile, user_id: int = Form(...)):
 
 
 @router.get("/videos/{video_id}", response_model=GetVideoResponseScheme)
-async def get_videos(video_id: int):
+async def get_videos(video_id: int, current_user_id: int = Depends(get_current_user_id)):
     """
     Получить ссылку на видео по id
     """
@@ -60,6 +61,8 @@ async def get_videos(video_id: int):
         video = await database_service.get_video_by_id(video_id=video_id)
         if not video:
             raise HTTPException(status_code=404, detail="video not found")
+        if video.uploaded_by_user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="video does not belong to user")
         # Generate fresh presigned URL from stored object key
         # path format: "bucket/object_name"
         parts = video.path.split("/", 1)
@@ -80,11 +83,13 @@ async def get_videos(video_id: int):
         raise HTTPException(status_code=500, detail="internal server error")
 
 @router.get("/videos/{video_id}/content")
-async def get_video_content(video_id: int):
+async def get_video_content(video_id: int, current_user_id: int = Depends(get_current_user_id)):
     try:
         video = await database_service.get_video_by_id(video_id=video_id)
         if not video:
             raise HTTPException(status_code=404, detail="video not found")
+        if video.uploaded_by_user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="video does not belong to user")
 
         parts = video.path.split("/", 1)
         if len(parts) == 2:

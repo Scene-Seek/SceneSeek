@@ -1,19 +1,23 @@
-const API_BASE = (() => {
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    const apiPort = 8000;
-    return `${protocol}//${hostname}:${apiPort}/api/v1`;
-})();
+let userId = localStorage.getItem("userId");
+let nickname = localStorage.getItem("nickname");
+let accessToken = localStorage.getItem("accessToken");
 
+if (!userId || !accessToken) {
+    clearAuthData();
+    window.location.href = 'index.html';
+}
+
+document.getElementById('current-user-name').textContent = nickname || "";
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+    clearAuthData();
+    window.location.href = 'index.html';
+});
 
 const fileInput = document.getElementById("fileInput");
 const videoPlayer = document.getElementById("videoPlayer");
 const removeBtn = document.getElementById("removeBtn");
 const uploadBtn = document.getElementById("uploadBtn");
-
-const identifyForm = document.getElementById("identify-form");
-const nicknameInput = document.getElementById("nickname-input");
-const userStatus = document.getElementById("user-status");
 
 const searchForm = document.getElementById("search-form");
 const promptInput = document.getElementById("prompt-input");
@@ -28,7 +32,6 @@ const searchSubmitBtn = searchForm.querySelector('button[type="submit"]');
 
 let currentVideoUrl = null;
 let selectedFile = null;
-let userId = null;
 let videoId = null;
 let videoProcessingStatus = null;
 let isUploadingVideo = false;
@@ -39,12 +42,8 @@ let activeOverlayBBox = null;
 let activeOverlayLabel = "";
 let bboxOverlayEnabled = true;
 
-if (videoStage) {
-    videoStage.hidden = true;
-}
-if (videoPlayer) {
-    videoPlayer.hidden = true;
-}
+if (videoStage) videoStage.hidden = true;
+if (videoPlayer) videoPlayer.hidden = true;
 
 const SUPPORTED_VIDEO_TYPES = [
     "video/mp4", "video/webm", "video/ogg",
@@ -61,29 +60,23 @@ const STATUS_LABELS = {
 };
 
 function saveAppState() {
+    if (!userId) return;
+    
     const state = {
-        nickname: nicknameInput.value,
-        userId: userId,
         videoId: videoId,
         videoProcessingStatus: videoProcessingStatus,
         prompt: promptInput.value
     };
-    localStorage.setItem("app_state", JSON.stringify(state));
+    localStorage.setItem(`app_state_${userId}`, JSON.stringify(state));
 }
 
 function loadAppState() {
-    const saved = localStorage.getItem('app_state');
+    if (!userId) return;
+    
+    const saved = localStorage.getItem(`app_state_${userId}`);
     if (!saved) return;
 
     const state = JSON.parse(saved);
-
-    if (state.nickname) {
-        nicknameInput.value = state.nickname;
-        if (state.userId) {
-            userId = state.userId;
-            setStatus(userStatus, `${state.nickname} (id: ${userId})`, "status-ready");
-        }
-    }
 
     if (state.prompt) {
         promptInput.value = state.prompt;
@@ -92,29 +85,49 @@ function loadAppState() {
     if (state.videoId) {
         videoId = state.videoId;
         videoProcessingStatus = state.videoProcessingStatus;
-        const serverVideoUrl = `${API_BASE}/videos/${videoId}/content`;
-        
-        videoPlayer.src = serverVideoUrl; 
-        videoPlayer.hidden = false;
-        if (videoStage) videoStage.hidden = false;
-        videoPlayer.load();
         setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
-        
-        if (videoProcessingStatus !== 'ready' && videoProcessingStatus !== 'completed') {
-            void pollVideoStatus(videoId, videoStateVersion);
-        }
+        void restoreSavedVideo(videoId, ++videoStateVersion);
     }
     
     syncSearchControls();
     syncUploadControls();
 }
 
-nicknameInput.addEventListener('input', saveAppState);
+async function restoreSavedVideo(id, currentVideoVersion) {
+    try {
+        const data = await requestJson(`${API_BASE}/videos/${id}`, { method: "GET" });
+        if (currentVideoVersion !== videoStateVersion || videoId !== id) return;
+
+        videoId = data.video_id;
+        videoProcessingStatus = data.status;
+        videoPlayer.src = data.video_path;
+        videoPlayer.hidden = false;
+        if (videoStage) videoStage.hidden = false;
+        videoPlayer.load();
+        setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
+
+        if (videoProcessingStatus !== 'ready' && videoProcessingStatus !== 'completed') {
+            void pollVideoStatus(videoId, currentVideoVersion);
+        }
+    } catch (err) {
+        if (currentVideoVersion !== videoStateVersion) return;
+        if (!localStorage.getItem("accessToken")) return;
+        videoId = null;
+        videoProcessingStatus = null;
+        resetVideoPreview();
+        setStatus(videoStatus, "не удалось восстановить видео", "status-failed");
+        saveAppState();
+    } finally {
+        if (currentVideoVersion === videoStateVersion) {
+            syncUploadControls();
+            syncSearchControls();
+        }
+    }
+}
+
 promptInput.addEventListener('input', saveAppState);
 
-function statusLabel(raw) {
-    return STATUS_LABELS[raw] || raw;
-}
+function statusLabel(raw) { return STATUS_LABELS[raw] || raw; }
 
 function setStatus(el, text, cssClass) {
     el.textContent = text;
@@ -136,12 +149,10 @@ function isVideoReadyForSearch() {
 function syncUploadControls() {
     const isLocked = isUploadingVideo || videoId !== null;
     const hasVideo = Boolean(selectedFile || videoId || currentVideoUrl);
-
     fileInput.disabled = isLocked;
     uploadBtn.disabled = !selectedFile || isLocked;
     removeBtn.hidden = !hasVideo;
     removeBtn.disabled = isUploadingVideo || !hasVideo;
-
     if (dropArea) {
         dropArea.classList.toggle("is-disabled", isLocked);
         dropArea.setAttribute("aria-disabled", String(isLocked));
@@ -184,9 +195,7 @@ function formatTimestamp(seconds) {
     const h = Math.floor(totalSec / 3600);
     const m = Math.floor((totalSec % 3600) / 60);
     const s = totalSec % 60;
-    if (h > 0) {
-        return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    }
+    if (h > 0) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
@@ -200,18 +209,12 @@ function toNumberOrNull(value) {
 }
 
 function normalizeBbox(value) {
-    if (Array.isArray(value)) {
-        return value.map((v) => Number(v)).filter((v) => Number.isFinite(v));
-    }
+    if (Array.isArray(value)) return value.map(Number).filter(Number.isFinite);
     if (typeof value === "string") {
         try {
             const parsed = JSON.parse(value);
-            if (Array.isArray(parsed)) {
-                return parsed.map((v) => Number(v)).filter((v) => Number.isFinite(v));
-            }
-        } catch {
-            return [];
-        }
+            if (Array.isArray(parsed)) return parsed.map(Number).filter(Number.isFinite);
+        } catch { return []; }
     }
     return [];
 }
@@ -223,15 +226,7 @@ function normalizeResultItem(item) {
     const score = toNumberOrNull(item.score ?? item.similarity_score);
     const hitType = item.type ?? item.hit_type ?? item?.yolo_metadata?.type ?? item?.metadata?.type;
     const bbox = normalizeBbox(item.bbox ?? item?.yolo_metadata?.bbox ?? item?.metadata?.bbox);
-
-    return {
-        start,
-        end,
-        bestTs,
-        score,
-        hitType,
-        bbox,
-    };
+    return { start, end, bestTs, score, hitType, bbox };
 }
 
 function clearBboxOverlay() {
@@ -254,24 +249,17 @@ function refreshBboxOverlay() {
         }
         return;
     }
-
     renderBboxOverlay();
 }
 
 function renderBboxOverlay() {
-    if (!bboxOverlayEnabled || !bboxOverlay || !videoPlayer || !activeOverlayBBox || activeOverlayBBox.length !== 4) {
-        return;
-    }
-
+    if (!bboxOverlayEnabled || !bboxOverlay || !videoPlayer || !activeOverlayBBox || activeOverlayBBox.length !== 4) return;
     const [x1, y1, x2, y2] = activeOverlayBBox;
     const naturalWidth = Number(videoPlayer.videoWidth);
     const naturalHeight = Number(videoPlayer.videoHeight);
     const renderedWidth = videoPlayer.clientWidth;
     const renderedHeight = videoPlayer.clientHeight;
-
-    if (!naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
-        return;
-    }
+    if (!naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) return;
 
     const stageRect = videoStage ? videoStage.getBoundingClientRect() : null;
     const videoRect = videoPlayer.getBoundingClientRect();
@@ -302,9 +290,7 @@ function renderBboxOverlay() {
     const width = Math.max(0, Math.min(contentWidth - (left - contentOffsetX), (Number(x2) - Number(x1)) * scaleX));
     const height = Math.max(0, Math.min(contentHeight - (top - contentOffsetY), (Number(y2) - Number(y1)) * scaleY));
 
-    if (stageRect && (videoRect.width === 0 || videoRect.height === 0)) {
-        return;
-    }
+    if (stageRect && (videoRect.width === 0 || videoRect.height === 0)) return;
 
     bboxOverlay.innerHTML = "";
     const rect = document.createElement("div");
@@ -323,34 +309,25 @@ function showBboxOverlay(bbox, label = "bbox") {
         clearBboxOverlay();
         return;
     }
-
-    activeOverlayBBox = bbox.map((value) => Number(value));
+    activeOverlayBBox = bbox.map(Number);
     activeOverlayLabel = label;
-    if (videoPlayer.hidden) {
-        return;
-    }
+    if (videoPlayer.hidden) return;
     refreshBboxOverlay();
 }
 
 function setActiveResultItem(activeLi) {
     resultsList.querySelectorAll(".result-item.is-active").forEach((node) => node.classList.remove("is-active"));
-    if (activeLi) {
-        activeLi.classList.add("is-active");
-    }
+    if (activeLi) activeLi.classList.add("is-active");
 }
 
 function updateOverlayForVideoSize() {
-    if (activeOverlayBBox) {
-        refreshBboxOverlay();
-    }
+    if (activeOverlayBBox) refreshBboxOverlay();
 }
 
 async function seekToTimestamp(seconds) {
     const ts = toNumberOrNull(seconds);
     if (!videoPlayer || ts == null || !videoPlayer.src) return;
-
     videoPlayer.hidden = false;
-
     if (videoPlayer.readyState < 1) {
         await new Promise((resolve) => {
             const onLoaded = () => {
@@ -362,67 +339,52 @@ async function seekToTimestamp(seconds) {
             setTimeout(resolve, 1200);
         });
     }
-
     const maxTime = Number.isFinite(videoPlayer.duration) ? Math.max(0, videoPlayer.duration - 0.05) : ts;
     videoPlayer.currentTime = Math.min(Math.max(0, ts), maxTime);
     videoPlayer.pause();
 }
 
-/**
- * Build a result <li> with a play button and interval info.
- */
 function buildResultItem(item) {
     const li = document.createElement("li");
     li.className = "result-item";
-
     const normalized = normalizeResultItem(item);
-    const startTime = normalized.start;
-    const endTime = normalized.end;
-    const seekTime = normalized.bestTs;
-    const score = normalized.score;
-    const hitType = normalized.hitType;
-    const bbox = normalized.bbox;
-
-    // Play button
+    
     const btn = document.createElement("button");
     btn.className = "result-seek-btn";
-    btn.title = `Перейти к ${formatTimestamp(seekTime)}`;
+    btn.title = `Перейти к ${formatTimestamp(normalized.bestTs)}`;
     btn.textContent = "\u25B6";
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
         setActiveResultItem(li);
-        seekToTimestamp(seekTime).then(() => showBboxOverlay(bbox, hitType || "bbox"));
+        seekToTimestamp(normalized.bestTs).then(() => showBboxOverlay(normalized.bbox, normalized.hitType || "bbox"));
     });
     li.appendChild(btn);
 
-    // Text block
     const textDiv = document.createElement("div");
     textDiv.className = "result-text";
-
     const timeLine = document.createElement("div");
     timeLine.className = "result-time";
-    if (startTime != null && endTime != null) {
-        timeLine.textContent = `${formatTimeRange(startTime, endTime)} (best: ${formatTimestamp(seekTime)})`;
+    if (normalized.start != null && normalized.end != null) {
+        timeLine.textContent = `${formatTimeRange(normalized.start, normalized.end)} (best: ${formatTimestamp(normalized.bestTs)})`;
     } else {
-        timeLine.textContent = seekTime != null ? formatTimestamp(seekTime) : "\u2014";
+        timeLine.textContent = normalized.bestTs != null ? formatTimestamp(normalized.bestTs) : "\u2014";
     }
     textDiv.appendChild(timeLine);
 
     const parts = [];
-    if (score != null) parts.push(`score: ${score.toFixed(3)}`);
+    if (normalized.score != null) parts.push(`score: ${normalized.score.toFixed(3)}`);
     if (parts.length) {
         const metaLine = document.createElement("div");
         metaLine.className = "result-meta";
         metaLine.textContent = parts.join(" \u2014 ");
         textDiv.appendChild(metaLine);
     }
-
     li.appendChild(textDiv);
 
     li.style.cursor = "pointer";
     li.addEventListener("click", () => {
         setActiveResultItem(li);
-        seekToTimestamp(seekTime).then(() => showBboxOverlay(bbox, hitType || "bbox"));
+        seekToTimestamp(normalized.bestTs).then(() => showBboxOverlay(normalized.bbox, normalized.hitType || "bbox"));
     });
 
     return li;
@@ -449,7 +411,6 @@ function setResults(items) {
     });
 }
 
-// --- Video error handling ---
 videoPlayer.addEventListener("error", () => {
     const err = videoPlayer.error;
     if (err) {
@@ -461,7 +422,6 @@ videoPlayer.addEventListener("error", () => {
         };
         const msg = messages[err.code] || `Ошибка видеоплеера (код ${err.code})`;
         setStatus(videoStatus, msg, "status-failed");
-        console.warn("[VideoPlayer]", msg, err.message);
     }
 });
 
@@ -491,41 +451,6 @@ if (bboxToggle) {
         }
     });
 }
-
-async function requestJson(url, options) {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `HTTP ${response.status}`);
-    }
-    return response.json();
-}
-
-// ======================== IDENTIFY ========================
-
-identifyForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const nickname = nicknameInput.value.trim();
-    if (!nickname) return;
-    setStatus(userStatus, "идёт запрос...", "status-pending");
-    try {
-        const data = await requestJson(`${API_BASE}/identify`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nickname })
-        });
-        userId = data.user_id;
-        saveAppState();
-        setStatus(userStatus, `${data.nickname} (id: ${userId})`, "status-ready");
-        syncSearchControls();
-    } catch (err) {
-        setStatus(userStatus, "ошибка", "status-failed");
-        syncSearchControls();
-        alert(`Ошибка идентификации: ${err.message}`);
-    }
-});
-
-// ======================== VIDEO ========================
 
 fileInput.addEventListener("change", (event) => {
     const file = event.target.files[0];
@@ -567,13 +492,7 @@ removeBtn.addEventListener("click", () => {
 });
 
 uploadBtn.addEventListener("click", async () => {
-    if (isUploadingVideo || videoId !== null) {
-        return;
-    }
-    if (!userId) {
-        alert("Сначала введите никнейм.");
-        return;
-    }
+    if (isUploadingVideo || videoId !== null) return;
     if (!selectedFile) {
         alert("Выберите видео.");
         return;
@@ -587,7 +506,6 @@ uploadBtn.addEventListener("click", async () => {
     setStatus(videoStatus, "загрузка на сервер...", "status-pending");
     const formData = new FormData();
     formData.append("file", selectedFile);
-    formData.append("user_id", String(userId));
 
     try {
         const data = await requestJson(`${API_BASE}/videos`, {
@@ -603,7 +521,6 @@ uploadBtn.addEventListener("click", async () => {
         saveAppState();
     } catch (err) {
         if (currentVideoVersion !== videoStateVersion) return;
-
         videoProcessingStatus = null;
         setStatus(videoStatus, "ошибка загрузки", "status-failed");
         alert(`Ошибка загрузки: ${err.message}`);
@@ -616,32 +533,21 @@ uploadBtn.addEventListener("click", async () => {
     }
 });
 
-/**
- * Poll GET /videos/{id} until processing_status is terminal.
- */
 async function pollVideoStatus(id, currentVideoVersion) {
     const terminalStatuses = ["ready", "completed", "failed"];
     const maxTries = 120;
-
     for (let i = 0; i < maxTries; i++) {
-        if (currentVideoVersion !== videoStateVersion || videoId !== id) {
-            return;
-        }
+        if (currentVideoVersion !== videoStateVersion || videoId !== id) return;
         await new Promise((r) => setTimeout(r, 5000));
         try {
             const data = await requestJson(`${API_BASE}/videos/${id}`, { method: "GET" });
-            if (currentVideoVersion !== videoStateVersion || videoId !== id) {
-                return;
-            }
-
+            if (currentVideoVersion !== videoStateVersion || videoId !== id) return;
             const st = data.status;
             videoProcessingStatus = st;
             saveAppState();
             setStatus(videoStatus, `видео (id: ${id}) \u2014 ${statusLabel(st)}`, statusClass(st));
             syncSearchControls();
-            if (terminalStatuses.includes(st)) {
-                return;
-            }
+            if (terminalStatuses.includes(st)) return;
         } catch (err) {
             console.warn("[PollVideo]", err.message);
         }
@@ -653,15 +559,11 @@ async function pollVideoStatus(id, currentVideoVersion) {
     }
 }
 
-// ======================== SEARCH ========================
-
 searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (isSearching) {
-        return;
-    }
-    if (!userId || !videoId) {
-        alert("Нужны пользователь и загруженное видео.");
+    if (isSearching) return;
+    if (!videoId) {
+        alert("Нужно загруженное видео.");
         return;
     }
     if (!isVideoReadyForSearch()) {
@@ -681,20 +583,17 @@ searchForm.addEventListener("submit", async (event) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                user_id: userId,
                 video_id: videoId,
                 query_text: queryText
             })
         });
         saveAppState();
         if (currentSearchVersion !== searchStateVersion) return;
-
         const queryId = data.query_id;
         setStatus(searchStatus, `в обработке... (id: ${queryId})`, "status-pending");
         await pollSearch(queryId, currentSearchVersion);
     } catch (err) {
         if (currentSearchVersion !== searchStateVersion) return;
-
         setStatus(searchStatus, "ошибка", "status-failed");
         alert(`Ошибка поиска: ${err.message}`);
     } finally {
@@ -710,41 +609,22 @@ async function pollSearch(queryId, currentSearchVersion) {
     const terminalStatuses = ["ready", "completed", "not_found", "failed"];
 
     for (let i = 0; i < maxTries; i++) {
-        if (currentSearchVersion !== searchStateVersion) {
-            return;
-        }
+        if (currentSearchVersion !== searchStateVersion) return;
         try {
-            const statusData = await requestJson(`${API_BASE}/searches/${queryId}`, {
-                method: "GET"
-            });
-            if (currentSearchVersion !== searchStateVersion) {
-                return;
-            }
-
+            const statusData = await requestJson(`${API_BASE}/searches/${queryId}`, { method: "GET" });
+            if (currentSearchVersion !== searchStateVersion) return;
             const st = statusData.status;
             setStatus(searchStatus, statusLabel(st), statusClass(st));
 
             if (terminalStatuses.includes(st)) {
                 if (st === "ready" || st === "completed") {
                     try {
-                        const resultsData = await requestJson(`${API_BASE}/searches/${queryId}/results`, {
-                            method: "GET"
-                        });
-                        if (currentSearchVersion !== searchStateVersion) {
-                            return;
-                        }
-
-                        const result = Array.isArray(resultsData.result)
-                            ? resultsData.result
-                            : Array.isArray(resultsData.results)
-                                ? resultsData.results
-                                : [];
+                        const resultsData = await requestJson(`${API_BASE}/searches/${queryId}/results`, { method: "GET" });
+                        if (currentSearchVersion !== searchStateVersion) return;
+                        const result = Array.isArray(resultsData.result) ? resultsData.result : Array.isArray(resultsData.results) ? resultsData.results : [];
                         setResults(result);
                     } catch (err) {
-                        if (currentSearchVersion !== searchStateVersion) {
-                            return;
-                        }
-
+                        if (currentSearchVersion !== searchStateVersion) return;
                         setResults([]);
                         setStatus(searchStatus, "ошибка получения результатов", "status-failed");
                     }
@@ -759,7 +639,6 @@ async function pollSearch(queryId, currentSearchVersion) {
         } catch (err) {
             console.warn("[PollSearch]", err.message);
         }
-
         await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     if (currentSearchVersion === searchStateVersion) {

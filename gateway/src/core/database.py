@@ -80,6 +80,8 @@ async def _run_non_destructive_alters() -> None:
         ("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS best_ts DOUBLE PRECISION;", "search_results.best_ts"),
         ("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS bbox JSONB DEFAULT '[]'::jsonb;", "search_results.bbox"),
         ("ALTER TABLE IF EXISTS search_results ADD COLUMN IF NOT EXISTS hit_type VARCHAR(20);", "search_results.hit_type"),
+        ("ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);", "users.password_hash"),
+        ("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users(username);", "users.username"),
     ]
 
     for sql, desc in alter_statements:

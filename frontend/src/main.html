@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Поиск - SceneSeek</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/styles/style.css">
+    <script src="/api/shared.js" defer></script>
+    <script src="/api/script.js" defer></script>
+</head>
+<body>
+    <header style="display: flex; justify-content: space-between; align-items: center; padding: 0 20px;">
+        <div style="text-align: center;">
+            <h1>SceneSeek</h1>
+            <h4>Мультимодальный поиск по видео</h4>
+        </div>
+        <div style="text-align: center;">
+            <p>Вы вошли как: <strong id="current-user-name"></strong></p>
+            <button id="logout-btn" type="button">Выйти</button>
+        </div>
+    </header>
+    <main>
+        <section class="card" id="upload-card">
+            <h2>Загрузка видео</h2>
+            <div class="video-uploader-area">
+                <div class="upload-area" id="dropArea">
+                    <label for="fileInput">
+                        <input type="file" id="fileInput" class="file-input" accept="video/*" hidden>
+                        <h4>Выберите видео</h4>
+                    </label>
+                </div>
+                <div class="video-preview-area">
+                    <div class="video-stage" id="video-stage" hidden>
+                        <video id="videoPlayer" hidden controls></video>
+                        <div class="bbox-overlay" id="bboxOverlay" hidden aria-hidden="true"></div>
+                    </div>
+                    <button id="removeBtn" hidden type="button">Закрыть видео</button>
+                </div>
+            </div>
+            <div class="actions">
+                <button id="uploadBtn" type="button">Загрузить</button>
+            </div>
+            <div class="status-line">
+                <span>Видео:</span>
+                <strong id="video-status">не загружено</strong>
+            </div>
+        </section>
+
+        <section class="card" id="search-card">
+            <h2>Поиск по видео</h2>
+            <form id="search-form">
+                <label>
+                    Промпт
+                    <input type="text" id="prompt-input" placeholder="Например: monkey" required autocomplete="off">
+                </label>
+                <button type="submit">Искать</button>
+            </form>
+            <div class="status-line">
+                <span>Статус поиска:</span>
+                <strong id="search-status">ожидание</strong>
+            </div>
+            <label class="bbox-toggle">
+                <input type="checkbox" id="bboxToggle" checked>
+                <span>Показывать bbox</span>
+            </label>
+            <div class="results-area">
+                <h3>Результаты</h3>
+                <ul id="results-list"></ul>
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2025-2026</p>
+    </footer>
+</body>
+</html>

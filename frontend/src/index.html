@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SceneSeek</title>
+    <title>Вход - SceneSeek</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles/style.css">
-    <script src="/api/script.js" defer></script>
+    <script src="/api/shared.js" defer></script>
+    <script src="/api/identify.js" defer></script>
 </head>
 <body>
     <header>
@@ -15,66 +16,21 @@
     </header>
     <main>
         <section class="card" id="identify-card">
-            <h2>1. Идентификация</h2>
+            <h2>Идентификация</h2>
             <form id="identify-form">
                 <label>
                     Никнейм
                     <input type="text" id="nickname-input" placeholder="Введите имя" required autocomplete="off">
                 </label>
+                <label>
+                    Пароль
+                    <input type="password" id="password-input" placeholder="Введите пароль" required autocomplete="current-password">
+                </label>
                 <button type="submit">Войти</button>
             </form>
             <div class="status-line">
-                <span>Пользователь:</span>
-                <strong id="user-status">не выбран</strong>
-            </div>
-        </section>
-
-        <section class="card" id="upload-card">
-            <h2>2. Загрузка видео</h2>
-            <div class="video-uploader-area">
-                <div class="upload-area" id="dropArea">
-                    <label for="fileInput">
-                        <input type="file" id="fileInput" class="file-input" accept="video/*" hidden>
-                        <h4>Выберите видео</h4>
-                    </label>
-                </div>
-                <div class="video-preview-area">
-                    <div class="video-stage" id="video-stage" hidden>
-                        <video id="videoPlayer" hidden controls></video>
-                        <div class="bbox-overlay" id="bboxOverlay" hidden aria-hidden="true"></div>
-                    </div>
-                    <button id="removeBtn" hidden type="button">Закрыть видео</button>
-                </div>
-            </div>
-            <div class="actions">
-                <button id="uploadBtn" type="button">Загрузить</button>
-            </div>
-            <div class="status-line">
-                <span>Видео:</span>
-                <strong id="video-status">не загружено</strong>
-            </div>
-        </section>
-
-        <section class="card" id="search-card">
-            <h2>3. Поиск по видео</h2>
-            <form id="search-form">
-                <label>
-                    Промпт
-                    <input type="text" id="prompt-input" placeholder="Например: monkey" required autocomplete="off">
-                </label>
-                <button type="submit">Искать</button>
-            </form>
-            <div class="status-line">
-                <span>Статус поиска:</span>
-                <strong id="search-status">ожидание</strong>
-            </div>
-            <label class="bbox-toggle">
-                <input type="checkbox" id="bboxToggle" checked>
-                <span>Показывать bbox</span>
-            </label>
-            <div class="results-area">
-                <h3>Результаты</h3>
-                <ul id="results-list"></ul>
+                <span>Статус:</span>
+                <strong id="user-status">ожидание ввода</strong>
             </div>
         </section>
     </main>

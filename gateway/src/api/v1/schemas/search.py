@@ -18,7 +18,7 @@ class UploadSearchRequestScheme(BaseModel):
     Загрузка промпта - Запрос
     """
 
-    user_id: int
+    user_id: int | None = None
     video_id: int
     query_text: str
 
