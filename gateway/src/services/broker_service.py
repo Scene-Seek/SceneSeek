@@ -12,7 +12,7 @@ class BrokerService:
 
     async def pub(self, *, message: Any, queue: str):
         """
-        Publish message using the already-connected broker.
+        Публикует сообщение в очередь
         """
         await self.broker.publish(message=message, queue=queue)
 

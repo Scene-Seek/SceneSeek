@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вход - SceneSeek</title>
+    <title>Авторизация - SceneSeek</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles/style.css">
     <script src="/api/shared.js" defer></script>
-    <script src="/api/identify.js" defer></script>
+    <script src="/api/auth.js" defer></script>
 </head>
 <body>
     <header>
@@ -15,22 +15,26 @@
         <h4>Мультимодальный поиск по видео</h4>
     </header>
     <main>
-        <section class="card" id="identify-card">
-            <h2>Идентификация</h2>
-            <form id="identify-form">
+        <section class="card auth-card" id="auth-card">
+            <div class="auth-mode-switch" aria-label="Режим авторизации">
+                <button id="login-mode-btn" type="button">Вход</button>
+                <button id="register-mode-btn" type="button">Регистрация</button>
+            </div>
+            <form id="auth-form">
                 <label>
-                    Никнейм
-                    <input type="text" id="nickname-input" placeholder="Введите имя" required autocomplete="off">
+                    Имя пользователя
+                    <input type="text" id="username-input" placeholder="Введите имя" required autocomplete="username">
                 </label>
                 <label>
                     Пароль
-                    <input type="password" id="password-input" placeholder="Введите пароль" required autocomplete="current-password">
+                    <input type="password" id="password-input" placeholder="Введите пароль" required>
                 </label>
-                <button type="submit">Войти</button>
+                <button id="auth-submit-btn" type="submit">Войти</button>
             </form>
+            <button id="anonymous-btn" class="secondary-button" type="button">Продолжить без регистрации</button>
             <div class="status-line">
                 <span>Статус:</span>
-                <strong id="user-status">ожидание ввода</strong>
+                <strong id="auth-status">ожидание входа</strong>
             </div>
         </section>
     </main>

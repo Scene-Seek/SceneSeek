@@ -3,7 +3,7 @@ from src.api.v1.schemas.common import StatusEnum
 
 
 class SearchResultItem(BaseModel):
-    """Результат поиска: временной сегмент с лучшим кадром и bbox."""
+    """Результат поиска: временной сегмент с лучшим кадром и bbox"""
 
     start: float
     end: float
@@ -18,7 +18,6 @@ class UploadSearchRequestScheme(BaseModel):
     Загрузка промпта - Запрос
     """
 
-    user_id: int | None = None
     video_id: int
     query_text: str
 

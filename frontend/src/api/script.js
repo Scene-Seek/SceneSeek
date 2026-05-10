@@ -1,17 +1,22 @@
-let userId = localStorage.getItem("userId");
-let nickname = localStorage.getItem("nickname");
-let accessToken = localStorage.getItem("accessToken");
+const authData = getStoredAuthData();
+let userId = authData.userId;
+let username = authData.username;
+let accessToken = authData.accessToken;
 
 if (!userId || !accessToken) {
     clearAuthData();
-    window.location.href = 'index.html';
+    window.location.href = "index.html";
 }
 
-document.getElementById('current-user-name').textContent = nickname || "";
+document.getElementById("current-user-name").textContent = username || "Гость";
+const userModeBadge = document.getElementById("user-mode-badge");
+if (userModeBadge) {
+    userModeBadge.hidden = !authData.isAnonymous;
+}
 
-document.getElementById('logout-btn').addEventListener('click', () => {
+document.getElementById("logout-btn").addEventListener("click", () => {
     clearAuthData();
-    window.location.href = 'index.html';
+    window.location.href = "index.html";
 });
 
 const fileInput = document.getElementById("fileInput");
@@ -461,7 +466,7 @@ fileInput.addEventListener("change", (event) => {
         selectedFile = file;
         const mimeOk = file.type && SUPPORTED_VIDEO_TYPES.includes(file.type);
         if (!mimeOk && file.type) {
-            setStatus(videoStatus, `\u26A0 Формат ${file.type} может не воспроизводиться`, "status-pending");
+            setStatus(videoStatus, `формат ${file.type} может не воспроизводиться`, "status-pending");
         } else {
             setStatus(videoStatus, "готово к загрузке", "");
         }

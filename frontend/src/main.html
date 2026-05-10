@@ -10,13 +10,17 @@
     <script src="/api/script.js" defer></script>
 </head>
 <body>
-    <header style="display: flex; justify-content: space-between; align-items: center; padding: 0 20px;">
-        <div style="text-align: center;">
+    <header class="app-header">
+        <div class="brand">
             <h1>SceneSeek</h1>
             <h4>Мультимодальный поиск по видео</h4>
         </div>
-        <div style="text-align: center;">
-            <p>Вы вошли как: <strong id="current-user-name"></strong></p>
+        <div class="user-panel">
+            <p>
+                <span>Пользователь:</span>
+                <strong id="current-user-name"></strong>
+                <span id="user-mode-badge" class="user-badge" hidden>гость</span>
+            </p>
             <button id="logout-btn" type="button">Выйти</button>
         </div>
     </header>

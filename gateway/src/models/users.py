@@ -7,24 +7,17 @@ from src.models.base import Base
 class Users(Base):
     __tablename__ = "users"
     __table_args__ = (
-        CheckConstraint(
-            "role IN ('admin', 'user')",
-            name="ck_users_role"
-        ),
+        CheckConstraint("role IN ('admin', 'user')", name="ck_users_role"),
     )
 
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    username: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    username: Mapped[str] = mapped_column(
+        String(50), nullable=False, unique=True, index=True
+    )
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    videos = relationship(
-        "Videos",
-        back_populates="uploaded_by",
-        passive_deletes=True
-    )
+    videos = relationship("Videos", back_populates="uploaded_by", passive_deletes=True)
     search_history = relationship(
-        "SearchHistory",
-        back_populates="user",
-        passive_deletes=True
+        "SearchHistory", back_populates="user", passive_deletes=True
     )

@@ -8,15 +8,28 @@ from src.models.videos import Videos
 
 
 class DatabaseService:
-    def __init__(self) -> None:
-        pass
-
     # Video
     async def create_video(
-        self, *, uploaded_by_user_id: int | None, title: str, path: str, duration: float | None = None, fps: float | None = None, resolution: str | None = None, processing_status: str = "pending"
+        self,
+        *,
+        uploaded_by_user_id: int | None,
+        title: str,
+        path: str,
+        duration: float | None = None,
+        fps: float | None = None,
+        resolution: str | None = None,
+        processing_status: str = "pending",
     ) -> Videos:
         async with session_factory() as session:
-            video = Videos(uploaded_by_user_id=uploaded_by_user_id, title=title, path=path, duration=duration, fps=fps, resolution=resolution, processing_status=processing_status)
+            video = Videos(
+                uploaded_by_user_id=uploaded_by_user_id,
+                title=title,
+                path=path,
+                duration=duration,
+                fps=fps,
+                resolution=resolution,
+                processing_status=processing_status,
+            )
             session.add(video)
             await session.commit()
             await session.refresh(video)
@@ -24,23 +37,33 @@ class DatabaseService:
 
     async def get_video_by_id(self, *, video_id: int) -> Videos | None:
         async with session_factory() as session:
-            result = await session.execute(select(Videos).where(Videos.video_id == video_id))
+            result = await session.execute(
+                select(Videos).where(Videos.video_id == video_id)
+            )
             return result.scalar_one_or_none()
 
     async def get_user_by_id(self, *, user_id: int) -> Users | None:
         async with session_factory() as session:
-            result = await session.execute(select(Users).where(Users.user_id == user_id))
+            result = await session.execute(
+                select(Users).where(Users.user_id == user_id)
+            )
             return result.scalar_one_or_none()
 
     async def get_user_by_username(self, *, username: str) -> Users | None:
         async with session_factory() as session:
-            result = await session.execute(select(Users).where(Users.username == username))
+            result = await session.execute(
+                select(Users).where(Users.username == username)
+            )
             return result.scalar_one_or_none()
 
     # Query
-    async def create_query(self, *, user_id: int, video_id: int, query: str) -> SearchHistory:
+    async def create_query(
+        self, *, user_id: int, video_id: int, query: str
+    ) -> SearchHistory:
         async with session_factory() as session:
-            search_entry = SearchHistory(user_id=user_id, video_id=video_id, query_text=query)
+            search_entry = SearchHistory(
+                user_id=user_id, video_id=video_id, query_text=query
+            )
             session.add(search_entry)
             await session.commit()
             await session.refresh(search_entry)
@@ -48,48 +71,31 @@ class DatabaseService:
 
     async def get_query_by_id(self, *, query_id: int) -> SearchHistory | None:
         async with session_factory() as session:
-            result = await session.execute(select(SearchHistory).where(SearchHistory.query_id == query_id))
+            result = await session.execute(
+                select(SearchHistory).where(SearchHistory.query_id == query_id)
+            )
             return result.scalar_one_or_none()
 
     async def get_query_results_by_id(self, *, query_id: int) -> list[SearchResults]:
         async with session_factory() as session:
             result = await session.execute(
-                select(SearchResults).where(SearchResults.query_id == query_id).options(selectinload(SearchResults.found_event)).order_by(SearchResults.similarity_score.desc())
+                select(SearchResults)
+                .where(SearchResults.query_id == query_id)
+                .options(selectinload(SearchResults.found_event))
+                .order_by(SearchResults.similarity_score.desc())
             )
             return result.scalars().all()
 
     # User
-    async def create_user(self, *, username: str, password_hash: str, role: str = "user") -> Users:
+    async def create_user(
+        self, *, username: str, password_hash: str | None, role: str = "user"
+    ) -> Users:
         async with session_factory() as session:
             user = Users(username=username, password_hash=password_hash, role=role)
             session.add(user)
             await session.commit()
             await session.refresh(user)
             return user
-
-    async def set_user_password(self, *, user_id: int, password_hash: str) -> Users | None:
-        async with session_factory() as session:
-            result = await session.execute(select(Users).where(Users.user_id == user_id))
-            user = result.scalar_one_or_none()
-            if not user:
-                return None
-            user.password_hash = password_hash
-            await session.commit()
-            await session.refresh(user)
-            return user
-
-    async def find_or_create_user(self, *, username: str, role: str = "user") -> Users:
-        async with session_factory() as session:
-            result = await session.execute(select(Users).where(Users.username == username))
-            user = result.scalar_one_or_none()
-            if not user:
-                user = Users(username=username, role=role)
-                session.add(user)
-                await session.commit()
-                await session.refresh(user)
-                return user
-            else:
-                return user
 
 
 database_service = DatabaseService()

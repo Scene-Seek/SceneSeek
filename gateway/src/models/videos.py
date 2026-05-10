@@ -11,8 +11,7 @@ class Videos(Base):
 
     video_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.user_id", ondelete="SET NULL"),
-        nullable=True
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -20,22 +19,11 @@ class Videos(Base):
     fps: Mapped[float | None] = mapped_column(Float, nullable=True)
     resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
     processing_status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default="pending"
+        String(20), nullable=False, server_default="pending"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        server_default=func.now()
+        DateTime, nullable=False, server_default=func.now()
     )
 
-    uploaded_by = relationship(
-        "Users",
-        back_populates="videos"
-    )
-    events = relationship(
-        "VideoEvents",
-        back_populates="video",
-        passive_deletes=True
-    )
+    uploaded_by = relationship("Users", back_populates="videos")
+    events = relationship("VideoEvents", back_populates="video", passive_deletes=True)

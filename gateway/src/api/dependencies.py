@@ -15,14 +15,18 @@ security = HTTPBearer(auto_error=False)
 
 
 def create_access_token(user_id: int) -> str:
-    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
     payload = {
         "sub": str(user_id),
         "exp": expire,
         "iat": datetime.datetime.now(datetime.timezone.utc),
         "type": "access",
     }
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(
+        payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+    )
 
 
 def hash_password(password: str) -> str:
@@ -57,13 +61,17 @@ def verify_password(password: str, stored_hash: str | None) -> bool:
     return hmac.compare_digest(actual_hash, expected_hash)
 
 
-def get_current_user_id(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> int:
+def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> int:
     if credentials is None:
         raise HTTPException(status_code=401, detail="Требуется авторизация")
 
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+        )
         sub = payload.get("sub")
         if sub is None:
             raise HTTPException(status_code=401, detail="Невалидный токен")

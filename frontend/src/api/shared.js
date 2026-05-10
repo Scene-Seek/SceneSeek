@@ -5,14 +5,33 @@ const API_BASE = (() => {
     return `${protocol}//${hostname}:${apiPort}/api/v1`;
 })();
 
+function getStoredAuthData() {
+    return {
+        userId: localStorage.getItem("userId"),
+        username: localStorage.getItem("username") || localStorage.getItem("nickname"),
+        accessToken: localStorage.getItem("accessToken"),
+        isAnonymous: localStorage.getItem("isAnonymous") === "true",
+    };
+}
+
+function storeAuthData(data) {
+    localStorage.setItem("userId", String(data.user_id));
+    localStorage.setItem("username", data.username);
+    localStorage.setItem("accessToken", data.token);
+    localStorage.setItem("isAnonymous", String(Boolean(data.is_anonymous)));
+    localStorage.removeItem("nickname");
+}
+
 function clearAuthData() {
     const userId = localStorage.getItem("userId");
     if (userId) {
         localStorage.removeItem(`app_state_${userId}`);
     }
     localStorage.removeItem("userId");
+    localStorage.removeItem("username");
     localStorage.removeItem("nickname");
     localStorage.removeItem("accessToken");
+    localStorage.removeItem("isAnonymous");
 }
 
 function redirectToLogin() {

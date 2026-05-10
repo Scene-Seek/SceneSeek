@@ -2,7 +2,13 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from src.api.dependencies import get_current_user_id
-from src.api.v1.schemas.search import GetSearchResultsScheme, GetSearchStatusResponseScheme, SearchResultItem, UploadSearchRequestScheme, UploadSearchResponseScheme
+from src.api.v1.schemas.search import (
+    GetSearchResultsScheme,
+    GetSearchStatusResponseScheme,
+    SearchResultItem,
+    UploadSearchRequestScheme,
+    UploadSearchResponseScheme,
+)
 from src.services.broker_service import broker_service
 from src.services.database_service import database_service
 
@@ -11,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/searches", response_model=UploadSearchResponseScheme)
-async def post_searches(payload: UploadSearchRequestScheme, current_user_id: int = Depends(get_current_user_id)):
+async def post_searches(
+    payload: UploadSearchRequestScheme,
+    current_user_id: int = Depends(get_current_user_id),
+):
     """
     Создать новый промпт
     """
     try:
-        # Если нет пользователя, то исключение
-        if payload.user_id is not None and payload.user_id != current_user_id:
-            raise HTTPException(status_code=403, detail="token user does not match payload user")
         user = await database_service.get_user_by_id(user_id=current_user_id)
         if not user:
             raise HTTPException(status_code=404, detail="user not found")
@@ -29,10 +35,26 @@ async def post_searches(payload: UploadSearchRequestScheme, current_user_id: int
         if video.uploaded_by_user_id != current_user_id:
             raise HTTPException(status_code=403, detail="video does not belong to user")
         # db
-        _query = await database_service.create_query(user_id=current_user_id, video_id=payload.video_id, query=payload.query_text)
+        _query = await database_service.create_query(
+            user_id=current_user_id, video_id=payload.video_id, query=payload.query_text
+        )
         # broker
-        await broker_service.pub(message={"query_id": _query.query_id, "user_id": _query.user_id, "video_id": _query.video_id, "query_text": _query.query_text}, queue=broker_service.QUEUE_SEARCHES)
-        return UploadSearchResponseScheme(query_id=_query.query_id, user_id=_query.user_id, video_id=_query.video_id, query_text=_query.query_text, status=_query.processing_status)
+        await broker_service.pub(
+            message={
+                "query_id": _query.query_id,
+                "user_id": _query.user_id,
+                "video_id": _query.video_id,
+                "query_text": _query.query_text,
+            },
+            queue=broker_service.QUEUE_SEARCHES,
+        )
+        return UploadSearchResponseScheme(
+            query_id=_query.query_id,
+            user_id=_query.user_id,
+            video_id=_query.video_id,
+            query_text=_query.query_text,
+            status=_query.processing_status,
+        )
     except HTTPException:
         raise
     except Exception:
@@ -41,7 +63,9 @@ async def post_searches(payload: UploadSearchRequestScheme, current_user_id: int
 
 
 @router.get("/searches/{query_id}", response_model=GetSearchStatusResponseScheme)
-async def get_searches_status(query_id: int, current_user_id: int = Depends(get_current_user_id)):
+async def get_searches_status(
+    query_id: int, current_user_id: int = Depends(get_current_user_id)
+):
     """
     Получить статус поиска
     """
@@ -52,7 +76,13 @@ async def get_searches_status(query_id: int, current_user_id: int = Depends(get_
             raise HTTPException(status_code=404, detail="query not found")
         if query.user_id != current_user_id:
             raise HTTPException(status_code=403, detail="query does not belong to user")
-        return GetSearchStatusResponseScheme(query_id=query_id, user_id=query.user_id, video_id=query.video_id, query_text=query.query_text, status=query.processing_status)
+        return GetSearchStatusResponseScheme(
+            query_id=query_id,
+            user_id=query.user_id,
+            video_id=query.video_id,
+            query_text=query.query_text,
+            status=query.processing_status,
+        )
     except HTTPException:
         raise
     except Exception:
@@ -61,23 +91,27 @@ async def get_searches_status(query_id: int, current_user_id: int = Depends(get_
 
 
 @router.get("/searches/{query_id}/results", response_model=GetSearchResultsScheme)
-async def get_searches_results(query_id: int, current_user_id: int = Depends(get_current_user_id)):
+async def get_searches_results(
+    query_id: int, current_user_id: int = Depends(get_current_user_id)
+):
     """
     Получить результаты поиска
     """
     try:
-        # Check query existence
         query = await database_service.get_query_by_id(query_id=query_id)
         if not query:
             raise HTTPException(status_code=404, detail="query not found")
         if query.user_id != current_user_id:
             raise HTTPException(status_code=403, detail="query does not belong to user")
 
-        # Worker already writes final merged segments into search_results.
         results = await database_service.get_query_results_by_id(query_id=query_id)
         payload_items: list[SearchResultItem] = []
         for result in results:
-            if result.segment_start is None or result.segment_end is None or result.best_ts is None:
+            if (
+                result.segment_start is None
+                or result.segment_end is None
+                or result.best_ts is None
+            ):
                 continue
 
             payload_items.append(
@@ -85,7 +119,9 @@ async def get_searches_results(query_id: int, current_user_id: int = Depends(get
                     start=round(result.segment_start, 2),
                     end=round(result.segment_end, 2),
                     best_ts=round(result.best_ts, 2),
-                    score=round(result.similarity_score, 4) if result.similarity_score is not None else 0.0,
+                    score=round(result.similarity_score, 4)
+                    if result.similarity_score is not None
+                    else 0.0,
                     bbox=result.bbox or [],
                     type=result.hit_type or "unknown",
                 )
