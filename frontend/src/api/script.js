@@ -475,13 +475,17 @@ function buildHistoryItem(item) {
 
     const query = document.createElement("span");
     query.className = "history-query";
-    query.textContent = item.query_text;
+    query.textContent = item.video_title || `video ${item.video_id}`;
     btn.appendChild(query);
 
     const meta = document.createElement("span");
     meta.className = "history-meta";
-    const videoTitle = item.video_title || `video ${item.video_id}`;
-    meta.textContent = `${videoTitle} · ${statusLabel(item.search_status)} · ${formatHistoryDate(item.search_date)}`;
+    const latestPrompt = item.latest_query_text || "без запросов";
+    const latestStatus = item.latest_search_status
+        ? statusLabel(item.latest_search_status)
+        : statusLabel(item.video_status);
+    const date = item.latest_search_date || item.created_at;
+    meta.textContent = `${latestPrompt} · ${latestStatus} · ${formatHistoryDate(date)}`;
     btn.appendChild(meta);
 
     btn.addEventListener("click", () => {
@@ -497,7 +501,7 @@ async function loadSearchHistory() {
     setHistoryStatus("загрузка...", "status-pending");
 
     try {
-        const data = await requestJson(`${API_BASE}/searches/history`, { method: "GET" });
+        const data = await requestJson(`${API_BASE}/videos/history`, { method: "GET" });
         const history = Array.isArray(data.history) ? data.history : [];
         setHistoryItems(history);
         setHistoryStatus(history.length ? `${history.length}` : "пусто", history.length ? "status-ready" : "");
@@ -531,9 +535,13 @@ async function openHistoryItem(item) {
 
     videoId = item.video_id;
     videoProcessingStatus = item.video_status;
-    promptInput.value = item.query_text;
+    promptInput.value = item.latest_query_text || "";
     setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
-    setStatus(searchStatus, statusLabel(item.search_status), statusClass(item.search_status));
+    if (item.latest_search_status) {
+        setStatus(searchStatus, statusLabel(item.latest_search_status), statusClass(item.latest_search_status));
+    } else {
+        setStatus(searchStatus, "ожидание", "");
+    }
     saveAppState();
     syncUploadControls();
     syncSearchControls();
@@ -541,9 +549,14 @@ async function openHistoryItem(item) {
     await restoreSavedVideo(videoId, currentVideoVersion);
     if (currentVideoVersion !== videoStateVersion || currentSearchVersion !== searchStateVersion) return;
 
-    if (item.search_status === "ready" || item.search_status === "completed") {
+    if (!item.latest_query_id) {
+        setResults([]);
+        return;
+    }
+
+    if (item.latest_search_status === "ready" || item.latest_search_status === "completed") {
         try {
-            const resultsData = await requestJson(`${API_BASE}/searches/${item.query_id}/results`, { method: "GET" });
+            const resultsData = await requestJson(`${API_BASE}/searches/${item.latest_query_id}/results`, { method: "GET" });
             if (currentSearchVersion !== searchStateVersion) return;
             const result = Array.isArray(resultsData.result) ? resultsData.result : [];
             setResults(result);
@@ -554,13 +567,13 @@ async function openHistoryItem(item) {
         return;
     }
 
-    if (item.search_status === "not_found" || item.search_status === "failed") {
+    if (item.latest_search_status === "not_found" || item.latest_search_status === "failed") {
         setResults([]);
         return;
     }
 
-    if (!SEARCH_TERMINAL_STATUSES.has(item.search_status)) {
-        await pollSearch(item.query_id, currentSearchVersion);
+    if (!SEARCH_TERMINAL_STATUSES.has(item.latest_search_status)) {
+        await pollSearch(item.latest_query_id, currentSearchVersion);
     }
 }
 

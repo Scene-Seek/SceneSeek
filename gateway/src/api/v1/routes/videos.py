@@ -1,10 +1,15 @@
 import logging
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import RedirectResponse
 from src.api.dependencies import get_current_user_id
-from src.api.v1.schemas.video import GetVideoResponseScheme, UploadVideoResponseScheme
+from src.api.v1.schemas.video import (
+    GetVideoHistoryScheme,
+    GetVideoResponseScheme,
+    UploadVideoResponseScheme,
+    VideoHistoryItemScheme,
+)
 from src.services.broker_service import broker_service
 from src.services.database_service import database_service
 from src.services.minio_service import minio_service
@@ -92,6 +97,39 @@ async def post_videos(
         raise
     except Exception:
         logger.exception("Unexpected error while uploading video")
+        raise HTTPException(status_code=500, detail="internal server error")
+
+
+@router.get("/videos/history", response_model=GetVideoHistoryScheme)
+async def get_videos_history(
+    current_user_id: int = Depends(get_current_user_id),
+    limit: int = Query(default=30, ge=1, le=100),
+):
+    """
+    Получить историю видео пользователя
+    """
+    try:
+        history = await database_service.get_video_history_by_user(
+            user_id=current_user_id,
+            limit=limit,
+        )
+        return GetVideoHistoryScheme(
+            history=[
+                VideoHistoryItemScheme(
+                    video_id=video.video_id,
+                    video_title=video.title,
+                    video_status=video.processing_status,
+                    created_at=video.created_at,
+                    latest_query_id=query_id,
+                    latest_query_text=query_text,
+                    latest_search_status=search_status,
+                    latest_search_date=search_date,
+                )
+                for video, query_id, query_text, search_status, search_date in history
+            ]
+        )
+    except Exception:
+        logger.exception("Unexpected error while getting video history")
         raise HTTPException(status_code=500, detail="internal server error")
 
 

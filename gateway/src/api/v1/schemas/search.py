@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import BaseModel
 from src.api.v1.schemas.common import StatusEnum
 
@@ -55,25 +53,3 @@ class GetSearchResultsScheme(BaseModel):
 
     query_id: int
     result: list[SearchResultItem]
-
-
-class SearchHistoryItemScheme(BaseModel):
-    """
-    Элемент истории поиска - Ответ
-    """
-
-    query_id: int
-    video_id: int
-    video_title: str
-    query_text: str
-    search_status: StatusEnum
-    video_status: StatusEnum
-    search_date: datetime
-
-
-class GetSearchHistoryScheme(BaseModel):
-    """
-    История поиска - Ответ
-    """
-
-    history: list[SearchHistoryItemScheme]

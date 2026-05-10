@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from src.core.database import session_factory
 from src.models.search_history import SearchHistory
@@ -86,20 +86,49 @@ class DatabaseService:
             )
             return result.scalars().all()
 
-    async def get_search_history_by_user(
-        self, *, user_id: int, limit: int = 30
-    ) -> list[SearchHistory]:
+    async def get_video_history_by_user(self, *, user_id: int, limit: int = 30):
         async with session_factory() as session:
-            result = await session.execute(
-                select(SearchHistory)
+            latest_search = (
+                select(
+                    SearchHistory.query_id.label("query_id"),
+                    SearchHistory.video_id.label("video_id"),
+                    SearchHistory.query_text.label("query_text"),
+                    SearchHistory.processing_status.label("processing_status"),
+                    SearchHistory.search_date.label("search_date"),
+                    func.row_number()
+                    .over(
+                        partition_by=SearchHistory.video_id,
+                        order_by=(
+                            SearchHistory.search_date.desc(),
+                            SearchHistory.query_id.desc(),
+                        ),
+                    )
+                    .label("rn"),
+                )
                 .where(SearchHistory.user_id == user_id)
-                .options(selectinload(SearchHistory.video))
+                .subquery()
+            )
+            result = await session.execute(
+                select(
+                    Videos,
+                    latest_search.c.query_id,
+                    latest_search.c.query_text,
+                    latest_search.c.processing_status,
+                    latest_search.c.search_date,
+                )
+                .outerjoin(
+                    latest_search,
+                    (latest_search.c.video_id == Videos.video_id)
+                    & (latest_search.c.rn == 1),
+                )
+                .where(Videos.uploaded_by_user_id == user_id)
                 .order_by(
-                    SearchHistory.search_date.desc(), SearchHistory.query_id.desc()
+                    func.coalesce(latest_search.c.search_date, Videos.created_at).desc(),
+                    Videos.video_id.desc(),
                 )
                 .limit(limit)
             )
-            return result.scalars().all()
+            return result.all()
 
     # User
     async def create_user(
