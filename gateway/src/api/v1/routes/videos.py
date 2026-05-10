@@ -32,7 +32,8 @@ def validate_video_file(file: UploadFile) -> str:
         filename.endswith(ext) for ext in SUPPORTED_VIDEO_EXTENSIONS
     )
     has_video_content_type = (
-        content_type.startswith("video/") or content_type in SUPPORTED_VIDEO_CONTENT_TYPES
+        content_type.startswith("video/")
+        or content_type in SUPPORTED_VIDEO_CONTENT_TYPES
     )
 
     if not has_video_content_type or not has_video_extension:

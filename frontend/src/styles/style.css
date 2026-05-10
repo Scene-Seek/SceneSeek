@@ -278,6 +278,21 @@ Custom html els
     border-top: 1px solid var(--border);
 }
 
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.history-header h2 {
+    margin: 0;
+}
+
+.history-header button {
+    flex-shrink: 0;
+}
+
 label {
     display: flex;
     flex-direction: column;
@@ -330,6 +345,52 @@ button[disabled] {
 ul {
     list-style: none;
     padding-left: 0;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 1rem 0 0;
+}
+
+.history-item,
+.history-empty {
+    padding: 0;
+    border-bottom: 0;
+}
+
+.history-empty {
+    color: var(--muted);
+}
+
+.history-item-btn {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    padding: 0.75rem 0.85rem;
+    background: var(--surface);
+    color: var(--text);
+    text-align: left;
+}
+
+.history-item-btn:hover:not([disabled]) {
+    background: rgba(47, 191, 143, 0.14);
+}
+
+.history-query {
+    width: 100%;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.history-meta {
+    width: 100%;
+    color: var(--muted);
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
 }
 
 /* --- Result items --- */
@@ -409,5 +470,10 @@ li {
     .video-uploader-area {
         min-width: 0;
         width: 100%;
+    }
+
+    .history-header {
+        align-items: stretch;
+        flex-direction: column;
     }
 }

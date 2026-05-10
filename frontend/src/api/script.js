@@ -34,6 +34,9 @@ const videoStage = document.getElementById("video-stage");
 const bboxOverlay = document.getElementById("bboxOverlay");
 const bboxToggle = document.getElementById("bboxToggle");
 const searchSubmitBtn = searchForm.querySelector('button[type="submit"]');
+const historyList = document.getElementById("history-list");
+const historyStatus = document.getElementById("history-status");
+const refreshHistoryBtn = document.getElementById("refresh-history-btn");
 
 let currentVideoUrl = null;
 let selectedFile = null;
@@ -63,6 +66,10 @@ const STATUS_LABELS = {
     not_found: "Ничего не найдено",
     failed: "Ошибка",
 };
+const VIDEO_READY_STATUSES = new Set(["ready", "completed"]);
+const VIDEO_TERMINAL_STATUSES = new Set(["ready", "completed", "failed"]);
+const VIDEO_REMOVABLE_STATUSES = new Set(["ready", "completed", "failed"]);
+const SEARCH_TERMINAL_STATUSES = new Set(["ready", "completed", "not_found", "failed"]);
 
 function saveAppState() {
     if (!userId) return;
@@ -111,7 +118,7 @@ async function restoreSavedVideo(id, currentVideoVersion) {
         videoPlayer.load();
         setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
 
-        if (videoProcessingStatus !== 'ready' && videoProcessingStatus !== 'completed') {
+        if (!VIDEO_TERMINAL_STATUSES.has(videoProcessingStatus)) {
             void pollVideoStatus(videoId, currentVideoVersion);
         }
     } catch (err) {
@@ -148,7 +155,13 @@ function statusClass(raw) {
 }
 
 function isVideoReadyForSearch() {
-    return videoProcessingStatus === "ready" || videoProcessingStatus === "completed";
+    return VIDEO_READY_STATUSES.has(videoProcessingStatus);
+}
+
+function canRemoveCurrentVideo() {
+    if (isUploadingVideo) return false;
+    if (videoId === null) return true;
+    return VIDEO_REMOVABLE_STATUSES.has(videoProcessingStatus);
 }
 
 function syncUploadControls() {
@@ -157,7 +170,10 @@ function syncUploadControls() {
     fileInput.disabled = isLocked;
     uploadBtn.disabled = !selectedFile || isLocked;
     removeBtn.hidden = !hasVideo;
-    removeBtn.disabled = isUploadingVideo || !hasVideo;
+    removeBtn.disabled = !hasVideo || !canRemoveCurrentVideo();
+    removeBtn.title = removeBtn.disabled && hasVideo
+        ? "Дождитесь завершения индексации"
+        : "";
     if (dropArea) {
         dropArea.classList.toggle("is-disabled", isLocked);
         dropArea.setAttribute("aria-disabled", String(isLocked));
@@ -416,6 +432,138 @@ function setResults(items) {
     });
 }
 
+function setHistoryStatus(text, cssClass = "") {
+    if (!historyStatus) return;
+    historyStatus.textContent = text;
+    historyStatus.className = "";
+    if (cssClass) historyStatus.classList.add(cssClass);
+}
+
+function formatHistoryDate(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+function setHistoryItems(items) {
+    if (!historyList) return;
+    historyList.innerHTML = "";
+
+    if (!items || items.length === 0) {
+        const li = document.createElement("li");
+        li.className = "history-empty";
+        li.textContent = "История пуста";
+        historyList.appendChild(li);
+        return;
+    }
+
+    items.forEach((item) => historyList.appendChild(buildHistoryItem(item)));
+}
+
+function buildHistoryItem(item) {
+    const li = document.createElement("li");
+    li.className = "history-item";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "history-item-btn";
+
+    const query = document.createElement("span");
+    query.className = "history-query";
+    query.textContent = item.query_text;
+    btn.appendChild(query);
+
+    const meta = document.createElement("span");
+    meta.className = "history-meta";
+    const videoTitle = item.video_title || `video ${item.video_id}`;
+    meta.textContent = `${videoTitle} · ${statusLabel(item.search_status)} · ${formatHistoryDate(item.search_date)}`;
+    btn.appendChild(meta);
+
+    btn.addEventListener("click", () => {
+        void openHistoryItem(item);
+    });
+
+    li.appendChild(btn);
+    return li;
+}
+
+async function loadSearchHistory() {
+    if (!historyList) return;
+    setHistoryStatus("загрузка...", "status-pending");
+
+    try {
+        const data = await requestJson(`${API_BASE}/searches/history`, { method: "GET" });
+        const history = Array.isArray(data.history) ? data.history : [];
+        setHistoryItems(history);
+        setHistoryStatus(history.length ? `${history.length}` : "пусто", history.length ? "status-ready" : "");
+    } catch (err) {
+        setHistoryItems([]);
+        setHistoryStatus("ошибка", "status-failed");
+    }
+}
+
+function canOpenHistoryItem(item) {
+    if (isUploadingVideo) return false;
+    if (videoId === null) return true;
+    if (Number(videoId) === Number(item.video_id)) return true;
+    return canRemoveCurrentVideo();
+}
+
+async function openHistoryItem(item) {
+    if (!canOpenHistoryItem(item)) {
+        alert("Дождитесь завершения индексации текущего видео.");
+        return;
+    }
+
+    const currentVideoVersion = ++videoStateVersion;
+    const currentSearchVersion = ++searchStateVersion;
+    isSearching = false;
+    selectedFile = null;
+    fileInput.value = "";
+    revokeCurrentVideoUrl();
+    resetBboxOverlayState();
+    resultsList.innerHTML = "";
+
+    videoId = item.video_id;
+    videoProcessingStatus = item.video_status;
+    promptInput.value = item.query_text;
+    setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
+    setStatus(searchStatus, statusLabel(item.search_status), statusClass(item.search_status));
+    saveAppState();
+    syncUploadControls();
+    syncSearchControls();
+
+    await restoreSavedVideo(videoId, currentVideoVersion);
+    if (currentVideoVersion !== videoStateVersion || currentSearchVersion !== searchStateVersion) return;
+
+    if (item.search_status === "ready" || item.search_status === "completed") {
+        try {
+            const resultsData = await requestJson(`${API_BASE}/searches/${item.query_id}/results`, { method: "GET" });
+            if (currentSearchVersion !== searchStateVersion) return;
+            const result = Array.isArray(resultsData.result) ? resultsData.result : [];
+            setResults(result);
+        } catch (err) {
+            if (currentSearchVersion !== searchStateVersion) return;
+            setStatus(searchStatus, "ошибка получения результатов", "status-failed");
+        }
+        return;
+    }
+
+    if (item.search_status === "not_found" || item.search_status === "failed") {
+        setResults([]);
+        return;
+    }
+
+    if (!SEARCH_TERMINAL_STATUSES.has(item.search_status)) {
+        await pollSearch(item.query_id, currentSearchVersion);
+    }
+}
+
 videoPlayer.addEventListener("error", () => {
     const err = videoPlayer.error;
     if (err) {
@@ -483,6 +631,11 @@ fileInput.addEventListener("change", (event) => {
 });
 
 removeBtn.addEventListener("click", () => {
+    if (!canRemoveCurrentVideo()) {
+        alert("Дождитесь завершения индексации видео.");
+        return;
+    }
+
     videoStateVersion += 1;
     videoProcessingStatus = null;
     resetVideoPreview();
@@ -539,7 +692,6 @@ uploadBtn.addEventListener("click", async () => {
 });
 
 async function pollVideoStatus(id, currentVideoVersion) {
-    const terminalStatuses = ["ready", "completed", "failed"];
     const maxTries = 120;
     for (let i = 0; i < maxTries; i++) {
         if (currentVideoVersion !== videoStateVersion || videoId !== id) return;
@@ -551,8 +703,9 @@ async function pollVideoStatus(id, currentVideoVersion) {
             videoProcessingStatus = st;
             saveAppState();
             setStatus(videoStatus, `видео (id: ${id}) \u2014 ${statusLabel(st)}`, statusClass(st));
+            syncUploadControls();
             syncSearchControls();
-            if (terminalStatuses.includes(st)) return;
+            if (VIDEO_TERMINAL_STATUSES.has(st)) return;
         } catch (err) {
             console.warn("[PollVideo]", err.message);
         }
@@ -560,6 +713,7 @@ async function pollVideoStatus(id, currentVideoVersion) {
     if (currentVideoVersion === videoStateVersion && videoId === id) {
         videoProcessingStatus = "failed";
         setStatus(videoStatus, `видео (id: ${id}) \u2014 таймаут ожидания`, "status-failed");
+        syncUploadControls();
         syncSearchControls();
     }
 }
@@ -595,6 +749,7 @@ searchForm.addEventListener("submit", async (event) => {
         saveAppState();
         if (currentSearchVersion !== searchStateVersion) return;
         const queryId = data.query_id;
+        void loadSearchHistory();
         setStatus(searchStatus, `в обработке... (id: ${queryId})`, "status-pending");
         await pollSearch(queryId, currentSearchVersion);
     } catch (err) {
@@ -611,7 +766,6 @@ searchForm.addEventListener("submit", async (event) => {
 
 async function pollSearch(queryId, currentSearchVersion) {
     const maxTries = 120;
-    const terminalStatuses = ["ready", "completed", "not_found", "failed"];
 
     for (let i = 0; i < maxTries; i++) {
         if (currentSearchVersion !== searchStateVersion) return;
@@ -621,7 +775,7 @@ async function pollSearch(queryId, currentSearchVersion) {
             const st = statusData.status;
             setStatus(searchStatus, statusLabel(st), statusClass(st));
 
-            if (terminalStatuses.includes(st)) {
+            if (SEARCH_TERMINAL_STATUSES.has(st)) {
                 if (st === "ready" || st === "completed") {
                     try {
                         const resultsData = await requestJson(`${API_BASE}/searches/${queryId}/results`, { method: "GET" });
@@ -639,6 +793,7 @@ async function pollSearch(queryId, currentSearchVersion) {
                     setResults([]);
                     setStatus(searchStatus, "ошибка обработки", "status-failed");
                 }
+                void loadSearchHistory();
                 return;
             }
         } catch (err) {
@@ -651,6 +806,15 @@ async function pollSearch(queryId, currentSearchVersion) {
     }
 }
 
-window.addEventListener('load', loadAppState);
+if (refreshHistoryBtn) {
+    refreshHistoryBtn.addEventListener("click", () => {
+        void loadSearchHistory();
+    });
+}
+
+window.addEventListener("load", () => {
+    loadAppState();
+    void loadSearchHistory();
+});
 syncUploadControls();
 syncSearchControls();

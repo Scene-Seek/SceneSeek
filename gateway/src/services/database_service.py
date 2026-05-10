@@ -86,6 +86,21 @@ class DatabaseService:
             )
             return result.scalars().all()
 
+    async def get_search_history_by_user(
+        self, *, user_id: int, limit: int = 30
+    ) -> list[SearchHistory]:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(SearchHistory)
+                .where(SearchHistory.user_id == user_id)
+                .options(selectinload(SearchHistory.video))
+                .order_by(
+                    SearchHistory.search_date.desc(), SearchHistory.query_id.desc()
+                )
+                .limit(limit)
+            )
+            return result.scalars().all()
+
     # User
     async def create_user(
         self, *, username: str, password_hash: str | None, role: str = "user"

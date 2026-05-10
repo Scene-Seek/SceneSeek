@@ -1,10 +1,12 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from src.api.dependencies import get_current_user_id
 from src.api.v1.schemas.search import (
+    GetSearchHistoryScheme,
     GetSearchResultsScheme,
     GetSearchStatusResponseScheme,
+    SearchHistoryItemScheme,
     SearchResultItem,
     UploadSearchRequestScheme,
     UploadSearchResponseScheme,
@@ -59,6 +61,40 @@ async def post_searches(
         raise
     except Exception:
         logger.exception("Unexpected error while creating search prompt")
+        raise HTTPException(status_code=500, detail="internal server error")
+
+
+@router.get("/searches/history", response_model=GetSearchHistoryScheme)
+async def get_searches_history(
+    current_user_id: int = Depends(get_current_user_id),
+    limit: int = Query(default=30, ge=1, le=100),
+):
+    """
+    Получить историю поиска пользователя
+    """
+    try:
+        history = await database_service.get_search_history_by_user(
+            user_id=current_user_id,
+            limit=limit,
+        )
+        return GetSearchHistoryScheme(
+            history=[
+                SearchHistoryItemScheme(
+                    query_id=item.query_id,
+                    video_id=item.video_id,
+                    video_title=item.video.title if item.video else "",
+                    query_text=item.query_text,
+                    search_status=item.processing_status,
+                    video_status=item.video.processing_status
+                    if item.video
+                    else "failed",
+                    search_date=item.search_date,
+                )
+                for item in history
+            ]
+        )
+    except Exception:
+        logger.exception("Unexpected error while getting search history")
         raise HTTPException(status_code=500, detail="internal server error")
 
 
