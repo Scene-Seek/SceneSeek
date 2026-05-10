@@ -12,6 +12,34 @@ from src.services.minio_service import minio_service
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+SUPPORTED_VIDEO_CONTENT_TYPES = {
+    "application/mp4",
+    "application/octet-stream",
+    "video/mp4",
+    "video/ogg",
+    "video/quicktime",
+    "video/webm",
+    "video/x-m4v",
+}
+SUPPORTED_VIDEO_EXTENSIONS = {".m4v", ".mov", ".mp4", ".ogg", ".webm"}
+
+
+def validate_video_file(file: UploadFile) -> str:
+    original_name = file.filename or "video.mp4"
+    content_type = (file.content_type or "").lower()
+    filename = original_name.lower()
+    has_video_extension = any(
+        filename.endswith(ext) for ext in SUPPORTED_VIDEO_EXTENSIONS
+    )
+    has_video_content_type = (
+        content_type.startswith("video/") or content_type in SUPPORTED_VIDEO_CONTENT_TYPES
+    )
+
+    if not has_video_content_type or not has_video_extension:
+        raise HTTPException(status_code=415, detail="unsupported video file type")
+
+    return original_name
+
 
 @router.post("/videos", response_model=UploadVideoResponseScheme)
 async def post_videos(
@@ -26,7 +54,7 @@ async def post_videos(
         user = await database_service.get_user_by_id(user_id=current_user_id)
         if not user:
             raise HTTPException(status_code=404, detail="user not found")
-        original_name = file.filename or "video.mp4"
+        original_name = validate_video_file(file)
         object_name = f"{current_user_id}/{uuid4()}_{original_name}"
         minio_service.save_obj(
             obj=file,
