@@ -5,6 +5,9 @@ const API_BASE = (() => {
     return `${protocol}//${hostname}:${apiPort}/api/v1`;
 })();
 
+/**
+ * Читает данные авторизации из localStorage
+ */
 function getStoredAuthData() {
     return {
         userId: localStorage.getItem("userId"),
@@ -14,6 +17,9 @@ function getStoredAuthData() {
     };
 }
 
+/**
+ * Сохраняет данные авторизации в localStorage
+ */
 function storeAuthData(data) {
     localStorage.setItem("userId", String(data.user_id));
     localStorage.setItem("username", data.username);
@@ -22,6 +28,9 @@ function storeAuthData(data) {
     localStorage.removeItem("nickname");
 }
 
+/**
+ * Очищает данные авторизации и состояние приложения
+ */
 function clearAuthData() {
     const userId = localStorage.getItem("userId");
     if (userId) {
@@ -34,12 +43,18 @@ function clearAuthData() {
     localStorage.removeItem("isAnonymous");
 }
 
+/**
+ * Перенаправляет на страницу входа при отсутствии сессии
+ */
 function redirectToLogin() {
     if (!window.location.pathname.endsWith("/index.html") && window.location.pathname !== "/") {
         window.location.href = "index.html";
     }
 }
 
+/**
+ * Формирует читаемое сообщение об ошибке из ответа API
+ */
 function errorMessageFromPayload(payload, fallback) {
     if (!payload) return fallback;
     if (typeof payload === "string") return payload;
@@ -50,6 +65,9 @@ function errorMessageFromPayload(payload, fallback) {
     return fallback;
 }
 
+/**
+ * Делает запрос к API и возвращает JSON с учетом авторизации
+ */
 async function requestJson(url, options = {}) {
     const { auth = true, headers, ...fetchOptions } = options;
     const requestHeaders = new Headers(headers || {});

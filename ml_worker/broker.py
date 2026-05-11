@@ -1,5 +1,3 @@
-"""broker"""
-
 import json
 import logging
 import os
@@ -13,7 +11,6 @@ from engine import VideoSearchEngine
 from faststream.rabbit import RabbitBroker
 
 broker = RabbitBroker(url=settings.RABBITMQ_URL)
-# broker = RabbitBroker()
 
 QUEUE_VIDEOS = "videos"
 QUEUE_SEARCHES = "searches"
@@ -22,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_payload(message: Any) -> dict | None:
+    """Пытается извлечь словарь полезной нагрузки из входного сообщения"""
     if isinstance(message, dict):
         return message
     if isinstance(message, str):
@@ -37,17 +35,20 @@ engine: VideoSearchEngine | None = None
 
 
 def set_engine(value: VideoSearchEngine) -> None:
+    """Сохраняет экземпляр движка для использования в обработчиках"""
     global engine
     engine = value
 
 
 def get_engine() -> VideoSearchEngine:
+    """Возвращает инициализированный движок или выбрасывает ошибку"""
     if engine is None:
         raise RuntimeError("Engine is not initialized")
     return engine
 
 
 def _preview_text(value: str, limit: int = 80) -> str:
+    """Сжимает текст для логов и убирает переводы строк"""
     text = value.strip().replace("\n", " ")
     if len(text) <= limit:
         return text
@@ -56,6 +57,7 @@ def _preview_text(value: str, limit: int = 80) -> str:
 
 @broker.subscriber(queue=QUEUE_VIDEOS)
 async def get_msg_videos(message: Any) -> None:
+    """Обрабатывает сообщения о новых видео и запускает индексацию"""
     payload = _parse_payload(message) or {}
     video_id = payload.get("video_id")
     user_id = payload.get("user_id", 1)
@@ -119,6 +121,7 @@ async def get_msg_videos(message: Any) -> None:
 
 @broker.subscriber(queue=QUEUE_SEARCHES)
 async def get_msg_searches(message: Any) -> None:
+    """Обрабатывает поисковые запросы и сохраняет результат в базе"""
     payload = _parse_payload(message) or {}
     query_id = payload.get("query_id")
     # user_id = payload.get("user_id")
@@ -145,7 +148,6 @@ async def get_msg_searches(message: Any) -> None:
             video_id=int(video_id) if video_id is not None else None,
         )
 
-        # Update search status with embedding
         if query_id is not None:
             status = "ready" if results else "not_found"
             await current_engine.update_search_status(query_id=query_id, query_text=query_text, status=status)

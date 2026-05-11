@@ -8,6 +8,7 @@ from src.models.videos import Videos
 
 
 class DatabaseService:
+    """Сервис для работы с БД"""
     # Video
     async def create_video(
         self,
@@ -20,6 +21,7 @@ class DatabaseService:
         resolution: str | None = None,
         processing_status: str = "pending",
     ) -> Videos:
+        """Создает запись о видео и возвращает объект"""
         async with session_factory() as session:
             video = Videos(
                 uploaded_by_user_id=uploaded_by_user_id,
@@ -36,6 +38,7 @@ class DatabaseService:
             return video
 
     async def get_video_by_id(self, *, video_id: int) -> Videos | None:
+        """Возвращает видео по идентификатору"""
         async with session_factory() as session:
             result = await session.execute(
                 select(Videos).where(Videos.video_id == video_id)
@@ -43,6 +46,7 @@ class DatabaseService:
             return result.scalar_one_or_none()
 
     async def get_user_by_id(self, *, user_id: int) -> Users | None:
+        """Возвращает пользователя по идентификатору"""
         async with session_factory() as session:
             result = await session.execute(
                 select(Users).where(Users.user_id == user_id)
@@ -50,6 +54,7 @@ class DatabaseService:
             return result.scalar_one_or_none()
 
     async def get_user_by_username(self, *, username: str) -> Users | None:
+        """Возвращает пользователя по имени"""
         async with session_factory() as session:
             result = await session.execute(
                 select(Users).where(Users.username == username)
@@ -60,6 +65,7 @@ class DatabaseService:
     async def create_query(
         self, *, user_id: int, video_id: int, query: str
     ) -> SearchHistory:
+        """Создает запись запроса и возвращает ее"""
         async with session_factory() as session:
             search_entry = SearchHistory(
                 user_id=user_id, video_id=video_id, query_text=query
@@ -70,6 +76,7 @@ class DatabaseService:
             return search_entry
 
     async def get_query_by_id(self, *, query_id: int) -> SearchHistory | None:
+        """Возвращает запись запроса по идентификатору"""
         async with session_factory() as session:
             result = await session.execute(
                 select(SearchHistory).where(SearchHistory.query_id == query_id)
@@ -77,6 +84,7 @@ class DatabaseService:
             return result.scalar_one_or_none()
 
     async def get_query_results_by_id(self, *, query_id: int) -> list[SearchResults]:
+        """Возвращает результаты поиска для указанного запроса"""
         async with session_factory() as session:
             result = await session.execute(
                 select(SearchResults)
@@ -87,6 +95,7 @@ class DatabaseService:
             return result.scalars().all()
 
     async def get_video_history_by_user(self, *, user_id: int, limit: int = 30):
+        """Возвращает историю видео и последний запрос по каждому видео"""
         async with session_factory() as session:
             latest_search = (
                 select(
@@ -134,6 +143,7 @@ class DatabaseService:
     async def create_user(
         self, *, username: str, password_hash: str | None, role: str = "user"
     ) -> Users:
+        """Создает пользователя и возвращает объект"""
         async with session_factory() as session:
             user = Users(username=username, password_hash=password_hash, role=role)
             session.add(user)

@@ -22,7 +22,7 @@ async def post_searches(
     current_user_id: int = Depends(get_current_user_id),
 ):
     """
-    Создать новый промпт
+    POST: создает новый запрос на поиск
     """
     try:
         user = await database_service.get_user_by_id(user_id=current_user_id)
@@ -67,7 +67,7 @@ async def get_searches_status(
     query_id: int, current_user_id: int = Depends(get_current_user_id)
 ):
     """
-    Получить статус поиска
+    GET: возвращает статус поиска
     """
     try:
         # db
@@ -95,9 +95,10 @@ async def get_searches_results(
     query_id: int, current_user_id: int = Depends(get_current_user_id)
 ):
     """
-    Получить результаты поиска
+    GET: возвращает результаты поиска
     """
     try:
+        # db
         query = await database_service.get_query_by_id(query_id=query_id)
         if not query:
             raise HTTPException(status_code=404, detail="query not found")

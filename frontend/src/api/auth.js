@@ -13,11 +13,17 @@ const registerModeBtn = document.getElementById("register-mode-btn");
 
 let authMode = "login";
 
+/**
+ * Обновляет текст и стиль статуса авторизации
+ */
 function setAuthStatus(text, cssClass = "") {
     authStatus.textContent = text;
     authStatus.className = cssClass;
 }
 
+/**
+ * Переключает режим между входом и регистрацией
+ */
 function setAuthMode(mode) {
     authMode = mode;
     const isLogin = authMode === "login";
@@ -31,6 +37,9 @@ function setAuthMode(mode) {
     setAuthStatus(isLogin ? "ожидание входа" : "ожидание регистрации");
 }
 
+/**
+ * Выполняет запрос авторизации и сохраняет данные пользователя
+ */
 async function authorize(endpoint, payload) {
     const options = {
         method: "POST",

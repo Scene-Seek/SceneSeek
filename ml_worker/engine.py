@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class IndexerConfig:
-    """Configuration for video indexing pipeline."""
+    """Настройки пайплайна индексации и поиска по видео"""
 
     frame_skip: int = 15
     batch_size: int = 32
@@ -43,6 +43,7 @@ class IndexerConfig:
 
     @classmethod
     def from_settings(cls, settings: Any) -> "IndexerConfig":
+        """Строит конфигурацию из объекта настроек и подставляет значения по умолчанию"""
         return cls(
             frame_skip=getattr(settings, "FRAME_SKIP", cls.frame_skip),
             batch_size=getattr(settings, "BATCH_SIZE", cls.batch_size),
@@ -57,9 +58,10 @@ class IndexerConfig:
 
 
 class ModelRuntime:
-    """Model lifecycle and embedding/cropping helpers."""
+    """Жизненный цикл моделей, обработка кадров и векторизация"""
 
     def __init__(self, config: IndexerConfig, device: str) -> None:
+        """Готовит окружение для инференса и базовые параметры рантайма"""
         self.config = config
         self.device = device
         self.detector: YOLO
@@ -68,6 +70,7 @@ class ModelRuntime:
         self.stopwords = self._build_stopwords()
 
     def load_models(self) -> None:
+        """Загружает модели детекции и текстово-визуальные энкодеры"""
         total_started = perf_counter()
 
         yolo_started = perf_counter()
@@ -89,6 +92,7 @@ class ModelRuntime:
         img_buffer: List[Image.Image],
         meta_buffer: List[Dict[str, Any]],
     ) -> None:
+        """Добавляет глобальный и локальные кропы кадра в буфер для векторизации"""
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb_frame)
 
@@ -107,12 +111,14 @@ class ModelRuntime:
             meta_buffer.append({"ts": ts, "bbox": coords, "type": "local"})
 
     def get_padding_crop(self, pil_img: Image.Image, box: List[float], padding: float = 0.25) -> Image.Image:
+        """Вырезает кроп с паддингом вокруг бокса и ограничивает его границами изображения"""
         w, h = pil_img.size
         x1, y1, x2, y2 = box
         bw, bh = x2 - x1, y2 - y1
         return pil_img.crop((max(0, x1 - bw * padding), max(0, y1 - bh * padding), min(w, x2 + bw * padding), min(h, y2 + bh * padding)))
 
     def _extract_tensor(self, outputs: Any) -> torch.Tensor:
+        """Достает тензор эмбеддингов из ответа модели в разных форматах"""
         if hasattr(outputs, "pooler_output"):
             return outputs.pooler_output
         if isinstance(outputs, (list, tuple)):
@@ -120,9 +126,11 @@ class ModelRuntime:
         return outputs
 
     def _build_stopwords(self) -> set[str]:
+        """Собирает набор стоп-слов для русского и английского языков"""
         return set(get_stop_words("en")) | set(get_stop_words("ru"))
 
     def normalize_query(self, query: str) -> str:
+        """Очищает запрос от пунктуации, приводит к нижнему регистру и убирает стоп-слова"""
         text = query.strip().lower()
         if not text:
             return ""
@@ -133,6 +141,7 @@ class ModelRuntime:
 
     @torch.inference_mode()
     def vectorize_images_sync(self, images: List[Image.Image]) -> np.ndarray:
+        """Синхронно строит нормализованные эмбеддинги для списка изображений"""
         if not images:
             return np.array([])
         inputs = self.siglip_processor(images=images, return_tensors="pt").to(self.device)
@@ -144,6 +153,7 @@ class ModelRuntime:
 
     @torch.inference_mode()
     def vectorize_text_sync(self, query: str) -> np.ndarray:
+        """Синхронно строит нормализованный эмбеддинг для текстового запроса"""
         normalized = self.normalize_query(query)
         prompt_query = normalized if normalized else query.strip().lower()
         full_query = f"a photo of {prompt_query}"
@@ -155,9 +165,10 @@ class ModelRuntime:
 
 
 class SearchPostProcessor:
-    """Pure search scoring and segmentation routines."""
+    """Постобработка результатов поиска: скоринг и сегментация"""
 
     def build_scored_hits(self, rows: List[asyncpg.Record]) -> List[Dict[str, Any]]:
+        """Преобразует сырые строки БД в хиты, применяя динамический порог по скору"""
         parsed_rows: List[Dict[str, Any]] = []
         scores: List[float] = []
         for row in rows:
@@ -216,6 +227,7 @@ class SearchPostProcessor:
         return hits
 
     def cluster_hits(self, raw_hits: List[Dict[str, Any]], merge_threshold_sec: float) -> List[List[Dict[str, Any]]]:
+        """Группирует хиты в сегменты по временному зазору внутри одного видео"""
         per_video_hits: Dict[int, List[Dict[str, Any]]] = {}
         for hit in raw_hits:
             per_video_hits.setdefault(hit["video_id"], []).append(hit)
@@ -233,6 +245,7 @@ class SearchPostProcessor:
         return segments
 
     def build_segment_results(self, segments: List[List[Dict[str, Any]]], min_segment_hits: int) -> List[Dict[str, Any]]:
+        """Формирует итоговые сегменты, выбирая лучший хит и агрегируя время"""
         results: List[Dict[str, Any]] = []
         for segment in segments:
             if len(segment) < min_segment_hits:
@@ -254,6 +267,7 @@ class SearchPostProcessor:
 
 class VideoSearchEngine:
     def __init__(self, config: Optional[IndexerConfig] = None) -> None:
+        """Инициализирует движок поиска, модели и пул подключений"""
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.config = config if config else IndexerConfig()
         self.pool: Optional[asyncpg.Pool] = None
@@ -265,9 +279,11 @@ class VideoSearchEngine:
         self._load_models()
 
     def _load_models(self) -> None:
+        """Загружает модели в рантайм"""
         self.runtime.load_models()
 
     async def close(self) -> None:
+        """Закрывает пул БД и останавливает потоковый пул"""
         if self.pool:
             logger.info("Closing asyncpg pool")
             await self.pool.close()
@@ -275,14 +291,16 @@ class VideoSearchEngine:
         logger.info("Video search engine shutdown complete")
 
     async def _initialize_db(self) -> None:
+        """Создает пул подключений к БД при первом использовании"""
         if not self.pool:
             logger.info("Initializing asyncpg pool inside engine")
             self.pool = await asyncpg.create_pool(dsn=self.config.db_dsn, init=register_vector)
             logger.info("Asyncpg pool initialized")
 
-    # ====================== INDEXING LOGIC ======================
+    # ====================== Индексирование ======================
 
     async def run_indexing(self, video_path: str, user_id: int = 1, video_id: int | None = None) -> None:
+        """Индексирует видеофайл, создавая события и эмбеддинги в базе данных"""
         started = perf_counter()
         await self._initialize_db()
 
@@ -363,6 +381,7 @@ class VideoSearchEngine:
         img_buffer: List[Image.Image],
         meta_buffer: List[Dict[str, Any]],
     ) -> int:
+        """Обрабатывает один кадр и при необходимости сохраняет батч эмбеддингов"""
         if self._should_skip_by_motion(frame, back_sub):
             return 0
 
@@ -378,6 +397,7 @@ class VideoSearchEngine:
         return saved_count
 
     def _should_skip_by_motion(self, frame: np.ndarray, back_sub: cv2.BackgroundSubtractor) -> bool:
+        """Определяет, стоит ли пропустить кадр по низкой динамике"""
         small = cv2.resize(frame, (320, 240))
         return cv2.countNonZero(back_sub.apply(small)) < self.config.motion_threshold
 
@@ -388,12 +408,15 @@ class VideoSearchEngine:
         img_buffer: List[Image.Image],
         meta_buffer: List[Dict[str, Any]],
     ) -> None:
+        """Добавляет представления кадра в общий буфер индексации"""
         self.runtime.append_frame_views(frame, ts, img_buffer, meta_buffer)
 
     def _get_padding_crop(self, pil_img: Image.Image, box: List[float], padding: float = 0.25) -> Image.Image:
+        """Делегирует вырезание кропа с паддингом в рантайм моделей"""
         return self.runtime.get_padding_crop(pil_img, box, padding)
 
     async def _process_and_save_batch(self, video_id: int, images: List[Image.Image], metas: List[Dict[str, Any]]) -> None:
+        """Векторизует изображения батчем и сохраняет их в базу"""
         loop = asyncio.get_running_loop()
         vectors = await loop.run_in_executor(self.executor, self._vectorize_images_sync, images)
 
@@ -411,17 +434,20 @@ class VideoSearchEngine:
         logger.info("Saved embedding batch: video_id=%s batch_size=%s", video_id, len(batch_data))
 
     def _extract_tensor(self, outputs: Any) -> torch.Tensor:
+        """Проксирует извлечение эмбеддингов из выходов модели"""
         return self.runtime._extract_tensor(outputs)
 
     @torch.inference_mode()
     def _vectorize_images_sync(self, images: List[Image.Image]) -> np.ndarray:
+        """Проксирует синхронную векторизацию изображений"""
         return self.runtime.vectorize_images_sync(images)
 
     @torch.inference_mode()
     def _vectorize_text_sync(self, query: str) -> np.ndarray:
+        """Проксирует синхронную векторизацию текста"""
         return self.runtime.vectorize_text_sync(query)
 
-    # ====================== SEARCH LOGIC ======================
+    # ====================== Поиск ======================
 
     async def search(
         self,
@@ -435,6 +461,7 @@ class VideoSearchEngine:
         raw_limit: Optional[int] = None,
         sql_min_similarity: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
+        """Выполняет поиск по эмбеддингам и возвращает топ результатов"""
         started = perf_counter()
         await self._initialize_db()
         logger.info(
@@ -497,6 +524,7 @@ class VideoSearchEngine:
         min_similarity: float,
         raw_limit: int,
     ) -> List[asyncpg.Record]:
+        """Запрашивает из БД кандидатов по векторной близости"""
         sql = """
             SELECT
                 e.event_id,
@@ -517,15 +545,19 @@ class VideoSearchEngine:
             return await conn.fetch(sql, query_vec.tolist(), video_id, float(min_similarity), int(raw_limit))
 
     def _build_scored_hits(self, rows: List[asyncpg.Record]) -> List[Dict[str, Any]]:
+        """Строит список хитов с весами из строк поиска"""
         return self.search_post_processor.build_scored_hits(rows)
 
     def _cluster_hits(self, raw_hits: List[Dict[str, Any]], merge_threshold_sec: float) -> List[List[Dict[str, Any]]]:
+        """Объединяет хиты в сегменты по временному порогу"""
         return self.search_post_processor.cluster_hits(raw_hits, merge_threshold_sec)
 
     def _build_segment_results(self, segments: List[List[Dict[str, Any]]], min_segment_hits: int) -> List[Dict[str, Any]]:
+        """Формирует итоговые результаты по сегментам"""
         return self.search_post_processor.build_segment_results(segments, min_segment_hits)
 
     async def update_search_status(self, query_id: int, query_text: str, status: str = "ready") -> None:
+        """Сохраняет эмбеддинг запроса и обновляет статус обработки"""
         await self._initialize_db()
         logger.info("Updating search status: query_id=%s status=%s", query_id, status)
         loop = asyncio.get_running_loop()
@@ -541,6 +573,7 @@ class VideoSearchEngine:
             await conn.execute(sql, query_embedding.tolist(), status, query_id)
 
     async def _insert_search_results(self, *, query_id: int, results: List[Dict[str, Any]]) -> None:
+        """Записывает результаты поиска в таблицу истории"""
         if not results:
             logger.info("Skipping search result insert because result set is empty: query_id=%s", query_id)
             return
@@ -567,9 +600,10 @@ class VideoSearchEngine:
             await conn.executemany(sql, data)
         logger.info("Inserted search results: query_id=%s row_count=%s", query_id, len(data))
 
-    # ====================== DATABASE HELPERS ======================
+    # ====================== БД Хелперы ======================
 
     async def _create_video_entry(self, video_path: str, user_id: int) -> int:
+        """Создает запись о видео и фиксирует метаданные файла"""
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -606,6 +640,7 @@ class VideoSearchEngine:
         return video_id
 
     async def _finalize_video_status(self, video_id: int, status: str) -> None:
+        """Обновляет статус видео в базе после обработки"""
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE videos SET processing_status = $1 WHERE video_id = $2", status, video_id)
         logger.info("Updated video status: video_id=%s status=%s", video_id, status)

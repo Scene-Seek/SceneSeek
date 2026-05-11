@@ -1,5 +1,3 @@
-"""config"""
-
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,6 +7,7 @@ ENV_FILE = REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):
+    """Набор параметров для доступа к БД, брокеру и ML моделям"""
     DB_HOST: str
     DB_PORT: int
     DB_USER: str
@@ -24,8 +23,7 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
 
-    # ML Worker Configuration
-    FRAME_SKIP: int = 15  # Initial frame skip (adaptive skip overrides at runtime)
+    FRAME_SKIP: int = 15
     BATCH_SIZE: int = 32
     MOTION_THRESHOLD: int = 100
     YOLO_CONF: float = 0.25
@@ -34,12 +32,12 @@ class Settings(BaseSettings):
     RAW_SEARCH_LIMIT: int = 5000
     SQL_MIN_SIMILARITY: float = 0.05
 
-    # Backward-compatible aliases
     YOLO_MODEL: str = "yolo26s.pt"
     CLIP_MODEL: str = "google/siglip2-base-patch16-224"
 
     @property
     def DATABASE_URL(self):
+        """Формирует строку подключения к базе данных для asyncpg"""
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     model_config = SettingsConfigDict(env_file=ENV_FILE)

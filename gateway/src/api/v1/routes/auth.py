@@ -41,6 +41,9 @@ def _clean_username(username: str) -> str:
 
 @router.post("/register", response_model=AuthResponseScheme)
 async def register(payload: AuthRequestScheme):
+    """
+    POST: регистрирует нового пользователя
+    """
     username = _clean_username(payload.username)
 
     existing_user = await database_service.get_user_by_username(username=username)
@@ -56,6 +59,9 @@ async def register(payload: AuthRequestScheme):
 
 @router.post("/login", response_model=AuthResponseScheme)
 async def login(payload: AuthRequestScheme):
+    """
+    POST: авторизует пользователя
+    """
     username = _clean_username(payload.username)
     user = await database_service.get_user_by_username(username=username)
 
@@ -63,19 +69,23 @@ async def login(payload: AuthRequestScheme):
         raise HTTPException(status_code=401, detail="invalid username or password")
 
     return _auth_response(user)
-
-
+    
 @router.post("/anonymous", response_model=AuthResponseScheme)
 async def anonymous():
+    """
+    POST: создает анонимного пользователя
+    """
     user = await database_service.create_user(
         username=f"anonymous_{uuid4().hex[:16]}",
         password_hash=None,
     )
     return _auth_response(user)
-
-
+    
 @router.get("/me", response_model=CurrentUserResponseScheme)
 async def me(current_user_id: int = Depends(get_current_user_id)):
+    """
+    GET: возвращает информацию о текущем пользователе
+    """
     user = await database_service.get_user_by_id(user_id=current_user_id)
     if not user:
         raise HTTPException(status_code=404, detail="user not found")

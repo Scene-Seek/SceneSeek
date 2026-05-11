@@ -30,6 +30,7 @@ SUPPORTED_VIDEO_EXTENSIONS = {".m4v", ".mov", ".mp4", ".ogg", ".webm"}
 
 
 def validate_video_file(file: UploadFile) -> str:
+    """Проверка формата и расширения загружаемого видеофайла"""
     original_name = file.filename or "video.mp4"
     content_type = (file.content_type or "").lower()
     filename = original_name.lower()
@@ -52,7 +53,7 @@ async def post_videos(
     file: UploadFile, current_user_id: int = Depends(get_current_user_id)
 ):
     """
-    Создать новое видео
+    POST: загружает новое видео
     """
 
     try:
@@ -106,7 +107,7 @@ async def get_videos_history(
     limit: int = Query(default=30, ge=1, le=100),
 ):
     """
-    Получить историю видео пользователя
+    GET: возвращает историю видео пользователя
     """
     try:
         history = await database_service.get_video_history_by_user(
@@ -138,7 +139,7 @@ async def get_videos(
     video_id: int, current_user_id: int = Depends(get_current_user_id)
 ):
     """
-    Получить ссылку на видео по id
+    GET: возвращает информацию о видео по id
     """
     try:
         # db
@@ -171,6 +172,9 @@ async def get_videos(
 async def get_video_content(
     video_id: int, current_user_id: int = Depends(get_current_user_id)
 ):
+    """
+    GET: перенаправляет на контент видео
+    """
     try:
         video = await database_service.get_video_by_id(video_id=video_id)
         if not video:

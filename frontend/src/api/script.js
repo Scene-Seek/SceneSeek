@@ -71,7 +71,11 @@ const VIDEO_TERMINAL_STATUSES = new Set(["ready", "completed", "failed"]);
 const VIDEO_REMOVABLE_STATUSES = new Set(["ready", "completed", "failed"]);
 const SEARCH_TERMINAL_STATUSES = new Set(["ready", "completed", "not_found", "failed"]);
 
+/**
+ * Сохраняет состояние приложения в localStorage
+ */
 function saveAppState() {
+    // Сохранить текущее состояние приложения в localStorage
     if (!userId) return;
     
     const state = {
@@ -82,7 +86,11 @@ function saveAppState() {
     localStorage.setItem(`app_state_${userId}`, JSON.stringify(state));
 }
 
+/**
+ * Загружает сохраненное состояние приложения из localStorage
+ */
 function loadAppState() {
+    // Загрузить сохраненное состояние приложения из localStorage
     if (!userId) return;
     
     const saved = localStorage.getItem(`app_state_${userId}`);
@@ -97,7 +105,7 @@ function loadAppState() {
     if (state.videoId) {
         videoId = state.videoId;
         videoProcessingStatus = state.videoProcessingStatus;
-        setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
+        setStatus(videoStatus, `${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
         void restoreSavedVideo(videoId, ++videoStateVersion);
     }
     
@@ -105,6 +113,9 @@ function loadAppState() {
     syncUploadControls();
 }
 
+/**
+ * Восстанавливает видео по идентификатору и синхронизирует UI
+ */
 async function restoreSavedVideo(id, currentVideoVersion) {
     try {
         const data = await requestJson(`${API_BASE}/videos/${id}`, { method: "GET" });
@@ -116,7 +127,7 @@ async function restoreSavedVideo(id, currentVideoVersion) {
         videoPlayer.hidden = false;
         if (videoStage) videoStage.hidden = false;
         videoPlayer.load();
-        setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
+        setStatus(videoStatus, `${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
 
         if (!VIDEO_TERMINAL_STATUSES.has(videoProcessingStatus)) {
             void pollVideoStatus(videoId, currentVideoVersion);
@@ -139,14 +150,23 @@ async function restoreSavedVideo(id, currentVideoVersion) {
 
 promptInput.addEventListener('input', saveAppState);
 
+/**
+ * Возвращает читаемую подпись для статуса
+ */
 function statusLabel(raw) { return STATUS_LABELS[raw] || raw; }
 
+/**
+ * Устанавливает текст и класс статуса на элементе
+ */
 function setStatus(el, text, cssClass) {
     el.textContent = text;
     el.className = "";
     if (cssClass) el.classList.add(cssClass);
 }
 
+/**
+ * Определяет CSS класс по статусу
+ */
 function statusClass(raw) {
     if (raw === "ready" || raw === "completed") return "status-ready";
     if (raw === "pending" || raw === "indexing") return "status-pending";
@@ -154,16 +174,25 @@ function statusClass(raw) {
     return "";
 }
 
+/**
+ * Проверяет готовность видео для поиска
+ */
 function isVideoReadyForSearch() {
     return VIDEO_READY_STATUSES.has(videoProcessingStatus);
 }
 
+/**
+ * Проверяет возможность удаления текущего видео
+ */
 function canRemoveCurrentVideo() {
     if (isUploadingVideo) return false;
     if (videoId === null) return true;
     return VIDEO_REMOVABLE_STATUSES.has(videoProcessingStatus);
 }
 
+/**
+ * Синхронизирует состояние контролов загрузки
+ */
 function syncUploadControls() {
     const isLocked = isUploadingVideo || videoId !== null;
     const hasVideo = Boolean(selectedFile || videoId || currentVideoUrl);
@@ -180,10 +209,16 @@ function syncUploadControls() {
     }
 }
 
+/**
+ * Синхронизирует состояние контролов поиска
+ */
 function syncSearchControls() {
     searchSubmitBtn.disabled = isSearching || !userId || !videoId || !isVideoReadyForSearch();
 }
 
+/**
+ * Освобождает текущий object URL видео
+ */
 function revokeCurrentVideoUrl() {
     if (currentVideoUrl) {
         URL.revokeObjectURL(currentVideoUrl);
@@ -191,6 +226,9 @@ function revokeCurrentVideoUrl() {
     }
 }
 
+/**
+ * Сбрасывает превью видео и оверлей
+ */
 function resetVideoPreview() {
     videoPlayer.pause();
     videoPlayer.removeAttribute("src");
@@ -201,6 +239,9 @@ function resetVideoPreview() {
     revokeCurrentVideoUrl();
 }
 
+/**
+ * Сбрасывает интерфейс поиска и результаты
+ */
 function resetSearchUi() {
     searchStateVersion += 1;
     isSearching = false;
@@ -210,6 +251,9 @@ function resetSearchUi() {
     syncSearchControls();
 }
 
+/**
+ * Форматирует секунды в строку времени
+ */
 function formatTimestamp(seconds) {
     if (seconds == null || Number.isNaN(Number(seconds))) return "??:??";
     const totalSec = Math.floor(Number(seconds));
@@ -220,15 +264,24 @@ function formatTimestamp(seconds) {
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/**
+ * Форматирует временной диапазон в человекочитаемый вид
+ */
 function formatTimeRange(startSec, endSec) {
     return `${formatTimestamp(startSec)} – ${formatTimestamp(endSec)}`;
 }
 
+/**
+ * Преобразует значение в число или null
+ */
 function toNumberOrNull(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Нормализует bbox в массив чисел
+ */
 function normalizeBbox(value) {
     if (Array.isArray(value)) return value.map(Number).filter(Number.isFinite);
     if (typeof value === "string") {
@@ -240,6 +293,9 @@ function normalizeBbox(value) {
     return [];
 }
 
+/**
+ * Нормализует элемент результата поиска
+ */
 function normalizeResultItem(item) {
     const start = toNumberOrNull(item.start ?? item.start_time ?? item.segment_start);
     const end = toNumberOrNull(item.end ?? item.end_time ?? item.segment_end);
@@ -250,18 +306,27 @@ function normalizeResultItem(item) {
     return { start, end, bestTs, score, hitType, bbox };
 }
 
+/**
+ * Очищает слой bbox
+ */
 function clearBboxOverlay() {
     if (!bboxOverlay) return;
     bboxOverlay.innerHTML = "";
     bboxOverlay.hidden = true;
 }
 
+/**
+ * Сбрасывает состояние bbox оверлея
+ */
 function resetBboxOverlayState() {
     activeOverlayBBox = null;
     activeOverlayLabel = "";
     clearBboxOverlay();
 }
 
+/**
+ * Обновляет bbox оверлей с учетом переключателя
+ */
 function refreshBboxOverlay() {
     if (!bboxOverlayEnabled) {
         if (bboxOverlay) {
@@ -273,6 +338,9 @@ function refreshBboxOverlay() {
     renderBboxOverlay();
 }
 
+/**
+ * Рисует bbox поверх видео с учетом масштаба
+ */
 function renderBboxOverlay() {
     if (!bboxOverlayEnabled || !bboxOverlay || !videoPlayer || !activeOverlayBBox || activeOverlayBBox.length !== 4) return;
     const [x1, y1, x2, y2] = activeOverlayBBox;
@@ -325,6 +393,9 @@ function renderBboxOverlay() {
     bboxOverlay.hidden = false;
 }
 
+/**
+ * Показывает bbox и метку на текущем кадре
+ */
 function showBboxOverlay(bbox, label = "bbox") {
     if (!Array.isArray(bbox) || bbox.length !== 4) {
         clearBboxOverlay();
@@ -336,15 +407,24 @@ function showBboxOverlay(bbox, label = "bbox") {
     refreshBboxOverlay();
 }
 
+/**
+ * Делает элемент результата активным
+ */
 function setActiveResultItem(activeLi) {
     resultsList.querySelectorAll(".result-item.is-active").forEach((node) => node.classList.remove("is-active"));
     if (activeLi) activeLi.classList.add("is-active");
 }
 
+/**
+ * Перерисовывает bbox при изменении размеров плеера
+ */
 function updateOverlayForVideoSize() {
     if (activeOverlayBBox) refreshBboxOverlay();
 }
 
+/**
+ * Перематывает видео на указанную временную метку
+ */
 async function seekToTimestamp(seconds) {
     const ts = toNumberOrNull(seconds);
     if (!videoPlayer || ts == null || !videoPlayer.src) return;
@@ -365,6 +445,9 @@ async function seekToTimestamp(seconds) {
     videoPlayer.pause();
 }
 
+/**
+ * Создает DOM элемент результата поиска
+ */
 function buildResultItem(item) {
     const li = document.createElement("li");
     li.className = "result-item";
@@ -388,7 +471,7 @@ function buildResultItem(item) {
     if (normalized.start != null && normalized.end != null) {
         timeLine.textContent = `${formatTimeRange(normalized.start, normalized.end)} (best: ${formatTimestamp(normalized.bestTs)})`;
     } else {
-        timeLine.textContent = normalized.bestTs != null ? formatTimestamp(normalized.bestTs) : "\u2014";
+        timeLine.textContent = normalized.bestTs != null ? formatTimestamp(normalized.bestTs) : "";
     }
     textDiv.appendChild(timeLine);
 
@@ -397,7 +480,7 @@ function buildResultItem(item) {
     if (parts.length) {
         const metaLine = document.createElement("div");
         metaLine.className = "result-meta";
-        metaLine.textContent = parts.join(" \u2014 ");
+        metaLine.textContent = parts.join("  ");
         textDiv.appendChild(metaLine);
     }
     li.appendChild(textDiv);
@@ -411,6 +494,9 @@ function buildResultItem(item) {
     return li;
 }
 
+/**
+ * Заполняет список результатов поиска
+ */
 function setResults(items) {
     clearBboxOverlay();
     resultsList.innerHTML = "";
@@ -432,6 +518,9 @@ function setResults(items) {
     });
 }
 
+/**
+ * Обновляет статус блока истории
+ */
 function setHistoryStatus(text, cssClass = "") {
     if (!historyStatus) return;
     historyStatus.textContent = text;
@@ -439,6 +528,9 @@ function setHistoryStatus(text, cssClass = "") {
     if (cssClass) historyStatus.classList.add(cssClass);
 }
 
+/**
+ * Форматирует дату для истории запросов
+ */
 function formatHistoryDate(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "";
@@ -450,6 +542,9 @@ function formatHistoryDate(value) {
     });
 }
 
+/**
+ * Заполняет список истории
+ */
 function setHistoryItems(items) {
     if (!historyList) return;
     historyList.innerHTML = "";
@@ -465,6 +560,9 @@ function setHistoryItems(items) {
     items.forEach((item) => historyList.appendChild(buildHistoryItem(item)));
 }
 
+/**
+ * Создает DOM элемент записи истории
+ */
 function buildHistoryItem(item) {
     const li = document.createElement("li");
     li.className = "history-item";
@@ -496,6 +594,9 @@ function buildHistoryItem(item) {
     return li;
 }
 
+/**
+ * Загружает историю видео и запросов
+ */
 async function loadSearchHistory() {
     if (!historyList) return;
     setHistoryStatus("загрузка...", "status-pending");
@@ -511,6 +612,9 @@ async function loadSearchHistory() {
     }
 }
 
+/**
+ * Проверяет возможность открыть запись истории
+ */
 function canOpenHistoryItem(item) {
     if (isUploadingVideo) return false;
     if (videoId === null) return true;
@@ -518,6 +622,9 @@ function canOpenHistoryItem(item) {
     return canRemoveCurrentVideo();
 }
 
+/**
+ * Загружает данные из истории и обновляет интерфейс
+ */
 async function openHistoryItem(item) {
     if (!canOpenHistoryItem(item)) {
         alert("Дождитесь завершения индексации текущего видео.");
@@ -536,7 +643,7 @@ async function openHistoryItem(item) {
     videoId = item.video_id;
     videoProcessingStatus = item.video_status;
     promptInput.value = item.latest_query_text || "";
-    setStatus(videoStatus, `видео (id: ${videoId}) — ${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
+    setStatus(videoStatus, `${statusLabel(videoProcessingStatus)}`, statusClass(videoProcessingStatus));
     if (item.latest_search_status) {
         setStatus(searchStatus, statusLabel(item.latest_search_status), statusClass(item.latest_search_status));
     } else {
@@ -583,7 +690,7 @@ videoPlayer.addEventListener("error", () => {
         const messages = {
             1: "Воспроизведение прервано",
             2: "Сетевая ошибка загрузки видео",
-            3: "Ошибка декодирования видео \u2014 формат не поддерживается браузером",
+            3: "Ошибка декодирования видео  формат не поддерживается браузером",
             4: "Формат видео не поддерживается",
         };
         const msg = messages[err.code] || `Ошибка видеоплеера (код ${err.code})`;
@@ -687,7 +794,7 @@ uploadBtn.addEventListener("click", async () => {
 
         videoId = data.video_id;
         videoProcessingStatus = data.status;
-        setStatus(videoStatus, `загружено (id: ${videoId}) \u2014 ${statusLabel(data.status)}`, statusClass(data.status));
+        setStatus(videoStatus, ` ${statusLabel(data.status)}`, statusClass(data.status));
         void pollVideoStatus(videoId, currentVideoVersion);
         saveAppState();
     } catch (err) {
@@ -704,6 +811,9 @@ uploadBtn.addEventListener("click", async () => {
     }
 });
 
+/**
+ * Опрашивает статус обработки видео до завершения
+ */
 async function pollVideoStatus(id, currentVideoVersion) {
     const maxTries = 120;
     for (let i = 0; i < maxTries; i++) {
@@ -715,7 +825,7 @@ async function pollVideoStatus(id, currentVideoVersion) {
             const st = data.status;
             videoProcessingStatus = st;
             saveAppState();
-            setStatus(videoStatus, `видео (id: ${id}) \u2014 ${statusLabel(st)}`, statusClass(st));
+            setStatus(videoStatus, ` ${statusLabel(st)}`, statusClass(st));
             syncUploadControls();
             syncSearchControls();
             if (VIDEO_TERMINAL_STATUSES.has(st)) return;
@@ -725,7 +835,7 @@ async function pollVideoStatus(id, currentVideoVersion) {
     }
     if (currentVideoVersion === videoStateVersion && videoId === id) {
         videoProcessingStatus = "failed";
-        setStatus(videoStatus, `видео (id: ${id}) \u2014 таймаут ожидания`, "status-failed");
+        setStatus(videoStatus, ` таймаут ожидания`, "status-failed");
         syncUploadControls();
         syncSearchControls();
     }
@@ -763,7 +873,7 @@ searchForm.addEventListener("submit", async (event) => {
         if (currentSearchVersion !== searchStateVersion) return;
         const queryId = data.query_id;
         void loadSearchHistory();
-        setStatus(searchStatus, `в обработке... (id: ${queryId})`, "status-pending");
+        setStatus(searchStatus, `в обработке... `, "status-pending");
         await pollSearch(queryId, currentSearchVersion);
     } catch (err) {
         if (currentSearchVersion !== searchStateVersion) return;

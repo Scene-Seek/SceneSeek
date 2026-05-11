@@ -20,6 +20,7 @@ app = FastStream(broker)
 
 @app.on_startup
 async def init_app() -> None:
+    """Поднимает движок, инициализирует пул БД и подписки брокера"""
     logger.info("ML worker startup initiated")
     conf = IndexerConfig.from_settings(settings)
     logger.info(
@@ -39,6 +40,7 @@ async def init_app() -> None:
 
 @app.on_shutdown
 async def close_app() -> None:
+    """Корректно завершает работу движка и освобождает ресурсы"""
     from broker import get_engine
 
     logger.info("ML worker shutdown initiated")
